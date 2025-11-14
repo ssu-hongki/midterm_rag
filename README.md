@@ -10,4 +10,6 @@ pip install --upgrade pip
 
 pip install -r requirements.txt
 
-python main_rag.py --rebuild
+python preprocess_pdfs.py
+
+python main_rag.py
