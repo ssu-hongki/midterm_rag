@@ -1,239 +1,245 @@
-import pdfplumber
-import json
+# preprocess_pdfs.py
+# -*- coding: utf-8 -*-
+
 import re
-import os
-import sys
-from typing import List, Dict, Any
+import json
+from pathlib import Path
+import pdfplumber
 
-# --------------------------------------------------------------------------------
-# A. 데이터 구조화 함수
-# --------------------------------------------------------------------------------
+# -------------------------------
+# 공용 함수
+# -------------------------------
+def norm(x):
+    return re.sub(r"\s+", " ", (x or "")).strip()
 
-def clean_text(text: Any) -> str:
-    """텍스트 정리: None 처리, 줄바꿈, 다중 공백 제거"""
-    if text is None:
-        return ""
-    text = str(text)
-    # 줄바꿈 및 다중 공백 제거
-    text = text.replace('\n', ' ').strip()
-    text = re.sub(r'\s+', ' ', text)
-    return text
+# -------------------------------
+# 0) 표 유형 자동 판별
+# -------------------------------
+def is_weekly(tbl):
+    head = " ".join(norm(c) for c in tbl[0])
+    keys = ["주", "week", "핵심어", "keyword", "세부내용", "description"]
+    return sum(k in head.lower() for k in keys) >= 2
 
-def extract_overview_chunk(text_raw: str) -> (Dict[str, Any], str):
-    """
-    [수정됨] 페이지 1 텍스트에서 강의개요 정보를 추출하여 
-    청크(Dict)와 과목명(str)을 반환합니다.
-    """
-    
-    # 1. 키 정보 추출
-    course_title = instructor = year = semester = course_no = ""
-    prerequisites = course_description = main_textbook = ""
-    assessments = {}
-    
-    # 년도 학기 과목코드 (예: 2025학년도 2학기 2150132404)
-    match_ycs = re.search(r'(\d{4})학년도 (\d)학기 (\d+)', text_raw)
-    if match_ycs:
-        year, semester, course_no = match_ycs.groups()
-        
-    # 강좌명 담당교수 (예: 데이터베이스 정영희)
-    match_title_inst = re.search(r'강좌명 담당교수\n(\S+)\s+(\S+)', text_raw)
-    if match_title_inst:
-        course_title, instructor = match_title_inst.groups()
-    
-    # (예외) 다른 양식 (예: 자연언어처리 김성신)
-    if not course_title:
-        match_title = re.search(r'강좌명\s+(\S+)\s+담당교수', text_raw)
-        if match_title: course_title = match_title.group(1)
-    if not instructor:
-        match_inst = re.search(r'담당교수\s+(\S+)\s+', text_raw)
-        if match_inst: instructor = match_inst.group(1)
+def is_eval(tbl):
+    head = " ".join(norm(c) for c in tbl[0]).lower()
+    return ("평가항목" in head) and ("반영비율" in head)
 
-    # 권장 선수과목
-    match_pre = re.search(r'권장 선수과목\n(.+)', text_raw)
-    if match_pre:
-        prerequisites = match_pre.group(1).strip()
-        
-    # 교과목 개요 (Course Description)
-    match_desc = re.search(r'교과목 개요\n(.+?)\n교육목표', text_raw, re.DOTALL)
-    if match_desc:
-        course_description = clean_text(match_desc.group(1).replace('(Course Description)', '').strip())
+def is_goals(tbl):
+    head = " ".join(norm(c) for c in tbl[0]).lower()
+    return ("교육목표" in head)
 
-    # 주교재 (예: *주교재/데이터베이스 for Beginner/우재남/한빛아카데미)
-    match_textbook = re.search(r'\*주교재/(.+)', text_raw)
-    if match_textbook:
-        main_textbook = clean_text(match_textbook.group(1).strip())
-        
-    # 평가 정보 추출 (예: 중간고사 35 100)
-    match_assess = re.findall(r'(중간고사|기말고사|과제|출석)\s+(\d+)\s+100', text_raw)
-    for item, ratio in match_assess:
-        assessments[item] = ratio
-        
-    assessment_str = ", ".join([f"{k}: {v}%" for k, v in assessments.items()])
+def is_texts(tbl):
+    body = " ".join(norm(c) for r in tbl for c in r if c).lower()
+    return any(k in body for k in ["주교재", "참고교재", "학습준비사항", "수강학생 유의"])
 
-    # 2. 최종 청크 구성
-    content = (
-        f"본 강의는 **{course_title}** 과목으로 **{year}년 {semester}학기**에 개설됩니다. "
-        f"담당 교수는 **{instructor}**입니다. 과목 코드는 {course_no}이며 3학점(3시간) 강좌입니다. "
-        f"권장 선수과목은 **{prerequisites}**입니다. "
-        f"주요 교재는 **{main_textbook}**입니다. "
-        f"교과목 개요: {course_description} "
-        f"성적 평가 비율은 {assessment_str}입니다."
-    )
-    
-    overview_chunk = {
-        "title": "강의개요",
-        "content": content,
-        "metadata": {"type": "overview", "course_title": course_title}
-    }
-    
-    # [수정됨] 과목명을 반환하여 주차별 청크에 주입할 수 있도록 함
-    return overview_chunk, course_title
+def is_basic(tbl):
+    body = " ".join(norm(c) for r in tbl for c in r if c)
+    keys = ["강좌명", "담당교수", "년도", "학기", "과목코드", "수강대상학과", "학점/주당시간", "이수구분"]
+    return sum(k in body for k in keys) >= 3
 
-def extract_weekly_syllabus_chunks(
-    table_data: List[List[str]],
-    course_title: str # [수정됨] 과목명을 받음
-) -> List[Dict[str, Any]]:
-    """테이블 데이터에서 주차별 강의개요 청크 생성"""
-    weekly_chunks = []
-    
-    rows = table_data[1:]
-    
-    for row in rows:
-        if len(row) < 5: continue 
-        
-        week = clean_text(row[0])
-        keyword = clean_text(row[1])
-        description = clean_text(row[2])
-        texts = clean_text(row[4])
-        
-        week_match = re.match(r'(\d{1,2})', week) # 숫자로 시작하는지 확인
-        if not week_match: continue # 주차 번호가 아닌 행 스킵
-            
-        week_num_str = week_match.group(1)
-            
-        # 1. [수정됨] 내용 구성 (과목명 문맥 주입)
-        content = f"과목: {course_title}\n{week_num_str}주차는"
-        if keyword:
-            content += f" 키워드 **{keyword}**로, {description}에 대해 학습합니다."
-        else:
-            content += f" {description}에 대해 학습합니다."
-            
-        if texts:
-            content += f" (교재범위: {texts})"
+# -------------------------------
+# 1) 모든 페이지에서 표 수집 + 분류
+# -------------------------------
+def collect_tables(pdf_path: Path):
+    buckets = {"basic": [], "goals": [], "eval": [], "texts": [], "weekly": []}
 
-        # 2. 제목 구성
-        title = f"주차별 강의개요: {week_num_str}주차"
-        if "중간고사" in description:
-            title += " (중간고사)"
-        elif "기말고사" in description:
-            title += " (기말고사)"
+    with pdfplumber.open(str(pdf_path)) as pdf:
+        for page in pdf.pages:
+            tables = page.extract_tables() or []
+            for tbl in tables:
+                if not tbl or not tbl[0]:
+                    continue
+                if is_weekly(tbl):
+                    buckets["weekly"].append(tbl)
+                elif is_eval(tbl):
+                    buckets["eval"].append(tbl)
+                elif is_goals(tbl):
+                    buckets["goals"].append(tbl)
+                elif is_texts(tbl):
+                    buckets["texts"].append(tbl)
+                elif is_basic(tbl):
+                    buckets["basic"].append(tbl)
 
-        # 3. [수정됨] 청크 추가 (week를 int로 저장)
-        weekly_chunks.append({
-            "title": title,
-            "content": content,
-            "metadata": {
-                "type": "weekly", 
-                "week": int(week_num_str), # [수정] "03" (str) -> 3 (int)
-                "course_title": course_title
-            }
-        })
-        
-    return weekly_chunks
+    return buckets
 
-# --------------------------------------------------------------------------------
-# B. 메인 파이프라인 함수
-# --------------------------------------------------------------------------------
+# -------------------------------
+# 2) 표 종류별 파서
+# -------------------------------
+def parse_basic_info(tables):
+    info = {}
+    for t in tables:
+        for row in t:
+            cells = [norm(c) for c in row if c]
+            for i in range(0, len(cells), 2):
+                if i + 1 < len(cells):
+                    key = re.sub(r"\(.*?\)", "", cells[i]).strip()
+                    val = cells[i + 1]
+                    if key and val:
+                        info[key] = val
+    return info
 
-def process_single_syllabus(file_path: str) -> List[Dict[str, Any]] | None:
-    """단일 PDF 파일을 처리하여 RAG 데이터 리스트를 반환"""
-    
-    try:
-        with pdfplumber.open(file_path) as pdf:
-            if len(pdf.pages) < 2:
-                print(f"  [경고] 파일 {file_path}: 페이지가 부족합니다. 스킵합니다.")
-                return None
-            
-            page1_text_raw = pdf.pages[0].extract_text(x_tolerance=1)
-            
-            page2_table_data = pdf.pages[1].extract_tables({
-                "vertical_strategy": "lines",
-                "horizontal_strategy": "lines",
-                "snap_tolerance": 3,
-            })
-            
-            if not page1_text_raw or not page2_table_data:
-                print(f"  [경고] 파일 {file_path}: 필요한 텍스트/테이블을 추출하지 못했습니다. 스킵합니다.")
-                return None
+def parse_goals(tables):
+    goals = []
+    for t in tables:
+        for row in t[1:]:
+            if row and row[0]:
+                goals.append(norm(row[0]))
+    return goals
 
-            # 3. [수정됨] 데이터 구조화
-            overview_chunk, course_title = extract_overview_chunk(page1_text_raw)
-            
-            if not course_title:
-                 print(f"  [경고] {file_path}: '과목명'을 추출하지 못했습니다. (비어있는 JSON이 생성될 수 있음)")
+def parse_eval(tables):
+    d = {}
+    for t in tables:
+        for row in t[1:]:
+            item = norm(row[0])
+            max_s = norm(row[1])
+            ratio = norm(row[2])
+            try:
+                max_s = float(max_s)
+            except Exception:
+                max_s = None
+            try:
+                ratio = float(ratio) / 100.0
+            except Exception:
+                ratio = None
+            if item:
+                d[item] = {"max_score": max_s, "ratio": ratio}
+    return d
 
-            # [수정됨] 주차별 청크에 과목명 전달
-            weekly_chunks = extract_weekly_syllabus_chunks(page2_table_data[0], course_title) 
+def parse_texts(tables):
+    res = {"주교재": None, "참고교재": None, "학습준비사항": None, "수강학생 유의사항": None}
+    for t in tables:
+        for row in t:
+            k = norm((row[0] or "")).replace("\n", "")
+            v = norm(row[1]) if len(row) > 1 else ""
+            if "주교재" in k:
+                res["주교재"] = (res["주교재"] + "\n" if res["주교재"] else "") + v
+            elif "참고교재" in k:
+                res["참고교재"] = (res["참고교재"] + "\n" if res["참고교재"] else "") + v
+            elif "학습준비사항" in k:
+                res["학습준비사항"] = v
+            elif "수강학생 유의" in k:
+                res["수강학생 유의사항"] = v
+    return res
 
-            return [overview_chunk] + weekly_chunks
+def parse_weekly(tables):
+    sents = []
+    for t in tables:
+        for row in t[1:]:
+            if not row or len(row) < 2:
+                continue
+            week = norm(row[0])
+            wn = re.sub(r"[^0-9]", "", week)
+            if not wn:
+                continue
 
-    except Exception as e:
-        print(f"  [오류] 파일 {file_path} 처리 중 예외 발생: {e}")
-        return None
+            keyword = norm(row[1])
+            desc = norm(row[2]) if len(row) > 2 else ""
+            method = norm(row[3]) if len(row) > 3 else ""
+            texts = norm(row[4]) if len(row) > 4 else ""
 
-def automate_syllabus_to_json(input_dir: str, output_file: str):
-    """지정된 폴더의 모든 PDF 강의계획서를 JSON 파일로 변환하여 저장"""
-    
-    os.makedirs(os.path.dirname(output_file) or '.', exist_ok=True)
-    
-    all_rag_data = []
-    
-    if not os.path.exists(input_dir):
-        print(f"❌ 오류: 입력 폴더 '{input_dir}'를 찾을 수 없습니다. 폴더를 생성하고 PDF 파일을 넣어주세요.")
-        return
+            sent = f"{wn}주차 강의 주제는 {keyword}입니다."
+            if desc:
+                sent += f" 주요 학습 내용은 {desc}입니다."
+            if texts:
+                sent += f" 교재범위는 {texts}입니다."
+            if method:
+                sent += f" 수업은 {method} 방식으로 진행됩니다."
+            sents.append(sent)
+    return sents
 
-    pdf_files = [f for f in os.listdir(input_dir) if f.lower().endswith('.pdf')]
-    
-    if not pdf_files:
-        print(f"⚠️ 경고: '{input_dir}' 폴더에 처리할 PDF 파일이 없습니다.")
-        return
+# -------------------------------
+# 3) 청킹 (5문장 단위)
+# -------------------------------
+def chunk_by_sentences(sentences, chunk_size=5):
+    chunks = []
+    for i in range(0, len(sentences), chunk_size):
+        chunks.append(sentences[i:i + chunk_size])
+    return chunks
 
-    print(f"--- 총 {len(pdf_files)}개의 PDF 파일 처리를 시작합니다 ---")
-    
-    for filename in pdf_files:
-        file_path = os.path.join(input_dir, filename)
-        print(f"➡️ 처리 중: {filename}")
-        
-        rag_data = process_single_syllabus(file_path)
-        
-        if rag_data:
-            for chunk in rag_data:
-                chunk['metadata']['source_file'] = filename
-            all_rag_data.extend(rag_data)
-            print(f"  [성공] {len(rag_data)}개의 청크 추가.")
-        else:
-            print(f"  [실패] {filename} 파일 처리 실패/스킵.")
+# -------------------------------
+# 4) 단일 PDF → 청크 리스트
+# -------------------------------
+def process_single_pdf(pdf_path: Path):
+    buckets = collect_tables(pdf_path)
 
-    if all_rag_data:
+    info = parse_basic_info(buckets["basic"])
+    goals = parse_goals(buckets["goals"])
+    eval_dict = parse_eval(buckets["eval"])
+    texts = parse_texts(buckets["texts"])
+    weekly = parse_weekly(buckets["weekly"])
+
+    sentences = []
+
+    if "강좌명" in info:
+        s = f"이 강의는 '{info['강좌명']}' 과목입니다."
+        if "담당교수" in info:
+            s += f" 담당 교수는 {info['담당교수']}입니다."
+        sentences.append(s)
+
+    if "년도" in info and "학기" in info:
+        sentences.append(f"개설 학기는 {info['년도']} {info['학기']}입니다.")
+
+    if "수강대상학과" in info:
+        sentences.append(f"수강 대상은 {info['수강대상학과']}입니다.")
+
+    if "교과목 개요" in info:
+        sentences.append(f"교과목 개요: {info['교과목 개요']}")
+
+    for g in goals:
+        sentences.append(f"교육목표: {g}")
+
+    sentences.extend(weekly)
+
+    parts = [f"{k} {int(v['ratio']*100)}%" for k, v in eval_dict.items() if v["ratio"]]
+    if parts:
+        sentences.append("이 강의의 성적 평가는 " + ", ".join(parts) + "로 반영됩니다.")
+
+    if texts["주교재"]:
+        sentences.append(f"주교재는 {texts['주교재']}입니다.")
+    if texts["참고교재"]:
+        sentences.append(f"참고교재로는 {texts['참고교재']} 등이 사용됩니다.")
+    if texts["학습준비사항"]:
+        sentences.append(f"학습 준비 사항: {texts['학습준비사항']}.")
+    if texts["수강학생 유의사항"]:
+        sentences.append(f"수강 시 유의할 점: {texts['수강학생 유의사항']}.")
+
+    chunks = chunk_by_sentences(sentences, chunk_size=5)
+
+    # chunk 단위 데이터 구성
+    chunk_payload = [
+        {
+            "chunk_id": i + 1,
+            "source_pdf": pdf_path.name,
+            "metadata": info,
+            "text": "\n".join(chunk)
+        }
+        for i, chunk in enumerate(chunks)
+    ]
+
+    return chunk_payload
+
+# -------------------------------
+# 5) 여러 PDF 한 번에 처리
+# -------------------------------
+def process_all_pdfs(
+    input_dir: Path = Path("data/pdfs"),
+    output_path: Path = Path("data/processed/course_chunks.json")
+):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    all_chunks = []
+    for pdf_path in sorted(input_dir.glob("*.pdf")):
+        print(f"▶ Processing: {pdf_path.name}")
         try:
-            with open(output_file, 'w', encoding='utf-8') as f:
-                json.dump(all_rag_data, f, ensure_ascii=False, indent=4)
-            print(f"\n--- ✅ 모든 파일 처리 완료! ---")
-            print(f"총 {len(all_rag_data)}개의 RAG 데이터 청크가 '{output_file}'에 저장되었습니다.")
+            chunks = process_single_pdf(pdf_path)
+            all_chunks.extend(chunks)
         except Exception as e:
-            print(f"\n❌ JSON 파일 저장 중 오류 발생: {e}")
-    else:
-        print("\n❌ 처리된 데이터가 없어 JSON 파일이 생성되지 않았습니다.")
+            print(f"  ⚠ {pdf_path.name} 처리 중 오류: {e}")
 
-# --------------------------------------------------------------------------------
-# C. 실행부
-# --------------------------------------------------------------------------------
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(all_chunks, f, ensure_ascii=False, indent=2)
+
+    print(f"\n✅ 총 {len(all_chunks)}개 청크 저장 → {output_path}")
 
 if __name__ == "__main__":
-    # 1. 입력 폴더와 출력 파일 설정
-    # (주의!) RAG 프로젝트 폴더 구조에 맞게 경로를 'data/'로 지정합니다.
-    INPUT_DIRECTORY = "data/pdfs" # PDF 파일들을 이 폴더 안에 넣으세요
-    OUTPUT_FILE = "data/all_syllabi_rag_data.json" # (주의!) 이 파일이 RAG의 입력임
-
-    # 2. 실행
-    automate_syllabus_to_json(INPUT_DIRECTORY, OUTPUT_FILE)
+    process_all_pdfs()
