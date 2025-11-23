@@ -202,6 +202,14 @@ def process_single_pdf(pdf_path: Path):
         sentences.append(f"학습 준비 사항: {texts['학습준비사항']}.")
     if texts["수강학생 유의사항"]:
         sentences.append(f"수강 시 유의할 점: {texts['수강학생 유의사항']}.")
+    
+    # 교수 연락처 정보 추가 (검색 가능하도록)
+    if "교수실" in info and info["교수실"] and info["교수실"] != "없음":
+        sentences.append(f"교수실 연락처는 {info['교수실']}입니다.")
+    if "연락처" in info and info["연락처"] and info["연락처"] != "없음":
+        sentences.append(f"담당 교수 연락처는 {info['연락처']}입니다.")
+    if "이메일" in info and info["이메일"] and info["이메일"] != "없음":
+        sentences.append(f"담당 교수 이메일은 {info['이메일']}입니다.")
 
     chunks = chunk_by_sentences(sentences, chunk_size=5)
 

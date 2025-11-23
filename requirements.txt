@@ -13,3 +13,5 @@ python-dotenv
 pandas
 streamlit
 scikit-learn==1.6.0
+sentence-transformers>=2.2.0
+torch>=2.0.0
