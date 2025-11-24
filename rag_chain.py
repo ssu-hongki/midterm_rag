@@ -100,6 +100,142 @@ class RAGChain:
             print(f"⚠️ 질문 확장 실패: {e}. 원본 질문만 사용.")
             return [query]
 
+    def _extract_metadata_filters(self, query: str) -> Dict[str, Any]:
+        """질문에서 metadata 필터 조건을 추출합니다."""
+        filters = {}
+        
+        # 학과/학부 필터 추출
+        학과_키워드 = ["학부", "학과", "대상"]
+        학과_목록 = ["ai융합", "ai융합학부", "컴퓨터", "컴퓨터학부", "소프트웨어", "전자정보", "전자정보공학부"]
+        
+        query_lower = query.lower()
+        for 학과 in 학과_목록:
+            if 학과 in query_lower:
+                filters["수강대상학과"] = 학과
+                break
+        
+        # 학년 필터 추출
+        import re
+        학년_패턴 = r"(\d)학년"
+        match = re.search(학년_패턴, query)
+        if match:
+            학년 = match.group(1)
+            filters["학년"] = f"{학년}학년"
+        
+        # 강좌명 필터 추출 (간단한 키워드 매칭)
+        강좌명_키워드 = ["자연언어처리", "nlp", "데이터베이스", "db", "프로그래밍", "프로그래밍및실습"]
+        for 키워드 in 강좌명_키워드:
+            if 키워드 in query_lower:
+                if "nlp" in query_lower or "자연언어처리" in query_lower:
+                    filters["강좌명_키워드"] = "자연언어처리"
+                elif "db" in query_lower or "데이터베이스" in query_lower:
+                    filters["강좌명_키워드"] = "데이터베이스"
+                elif "프로그래밍" in query_lower:
+                    filters["강좌명_키워드"] = "프로그래밍"
+                break
+        
+        # LLM을 사용한 더 정확한 필터 추출
+        if not filters:  # 간단한 추출로 필터를 못 찾았을 때만 LLM 사용
+            try:
+                prompt = f"""다음 질문에서 강의계획서 검색에 필요한 필터 조건을 추출해주세요.
+질문: {query}
+
+다음 JSON 형식으로 답변해주세요 (해당하는 것만):
+{{
+  "수강대상학과": "학과/학부명 (예: AI융합학부, 컴퓨터학부)",
+  "학년": "학년 (예: 1학년, 2학년, 3학년, 4학년)",
+  "강좌명": "강좌명 (예: 자연언어처리, 데이터베이스)",
+  "담당교수": "교수명",
+  "과목코드": "과목코드"
+}}
+
+해당하는 정보가 없으면 null로 표시하세요. JSON만 답변하세요."""
+
+                resp = self.client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "너는 질문에서 필터 조건을 추출하는 전문가야. JSON 형식으로만 답변해줘."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.1,
+                    max_tokens=200
+                )
+                import json
+                extracted = json.loads(resp.choices[0].message.content.strip())
+                filters.update({k: v for k, v in extracted.items() if v and v != "null"})
+            except Exception as e:
+                print(f"⚠️ 필터 추출 실패: {e}")
+        
+        return filters
+
+    def _filter_by_metadata(self, filters: Dict[str, Any]) -> List[int]:
+        """metadata 필터 조건에 맞는 청크 인덱스를 반환합니다."""
+        if not filters:
+            return list(range(len(self.metadatas)))  # 필터가 없으면 전체
+        
+        filtered_indices = []
+        
+        for idx, meta_item in enumerate(self.metadatas):
+            metadata = meta_item.get("metadata", {})
+            match = True
+            
+            # 수강대상학과 필터
+            if "수강대상학과" in filters:
+                수강대상 = metadata.get("수강대상학과", "").lower()
+                필터_학과 = filters["수강대상학과"].lower()
+                # "ai융합" -> "ai융합학부" 매칭
+                if "ai융합" in 필터_학과:
+                    if "ai융합" not in 수강대상:
+                        match = False
+                elif "컴퓨터" in 필터_학과:
+                    if "컴퓨터" not in 수강대상:
+                        match = False
+                else:
+                    if 필터_학과 not in 수강대상:
+                        match = False
+            
+            # 학년 필터
+            if match and "학년" in filters:
+                수강대상 = metadata.get("수강대상학과", "").lower()
+                필터_학년 = filters["학년"].lower()
+                # 수강대상에 학년 정보가 포함되어 있는지 확인
+                # "3학년" 또는 "3" 모두 매칭
+                학년_숫자 = 필터_학년.replace("학년", "").strip()
+                if 학년_숫자 not in 수강대상 and 필터_학년 not in 수강대상:
+                    match = False
+            
+            # 강좌명 필터
+            if match and "강좌명_키워드" in filters:
+                강좌명 = metadata.get("강좌명", "").lower()
+                필터_키워드 = filters["강좌명_키워드"].lower()
+                if 필터_키워드 not in 강좌명:
+                    match = False
+            
+            if match and "강좌명" in filters:
+                강좌명 = metadata.get("강좌명", "").lower()
+                필터_강좌명 = filters["강좌명"].lower()
+                if 필터_강좌명 not in 강좌명:
+                    match = False
+            
+            # 담당교수 필터
+            if match and "담당교수" in filters:
+                교수 = metadata.get("담당교수", "").lower()
+                필터_교수 = filters["담당교수"].lower()
+                if 필터_교수 not in 교수:
+                    match = False
+            
+            # 과목코드 필터
+            if match and "과목코드" in filters:
+                코드 = metadata.get("과목코드", "")
+                필터_코드 = filters["과목코드"]
+                if 필터_코드 not in str(코드):
+                    match = False
+            
+            if match:
+                filtered_indices.append(idx)
+        
+        return filtered_indices
+
     def _embed_query(self, query: str):
         resp = self.client.embeddings.create(
             model="text-embedding-3-small",
@@ -110,6 +246,18 @@ class RAGChain:
     def _retrieve(self, query: str, transformed_query: Optional[str] = None) -> List[Dict[str, Any]]:
         """벡터 검색으로 후보를 찾고, 재랭킹을 적용합니다."""
         search_query = transformed_query if transformed_query else query
+        
+        # 1단계: Metadata 필터링
+        filters = self._extract_metadata_filters(query)
+        filtered_indices = self._filter_by_metadata(filters)
+        
+        if not filtered_indices:
+            # 필터에 맞는 청크가 없으면 빈 리스트 반환
+            return []
+        
+        # 필터링된 청크의 임베딩만 사용
+        filtered_embeddings = self.embeddings[filtered_indices]
+        index_mapping = {i: original_idx for i, original_idx in enumerate(filtered_indices)}
         
         # Query Expansion: 다중 질문으로 검색
         if self.use_query_expansion:
@@ -123,12 +271,15 @@ class RAGChain:
         
         for eq in expanded_queries:
             q_vec = self._embed_query(eq)
-            scores, idxs = top_k_similar(self.embeddings, q_vec, k=candidate_k)
+            # 필터링된 임베딩에서만 검색
+            scores, local_idxs = top_k_similar(filtered_embeddings, q_vec, k=min(candidate_k, len(filtered_embeddings)))
             
-            for score, idx in zip(scores, idxs):
-                item_id = self.metadatas[int(idx)]["id"]
+            for score, local_idx in zip(scores, local_idxs):
+                original_idx = index_mapping[int(local_idx)]
+                item_id = self.metadatas[original_idx]["id"]
+                
                 if item_id not in all_candidates:
-                    item = dict(self.metadatas[int(idx)])
+                    item = dict(self.metadatas[original_idx])
                     item["vector_score"] = float(score)
                     item["score"] = float(score)
                     item["matched_queries"] = [eq]
@@ -229,10 +380,13 @@ class RAGChain:
         # 1단계: 질문 변환 (명확하게 만들기)
         transformed_query = self._transform_query(query) if self.use_query_expansion else query
         
-        # 2단계: 검색
+        # 2단계: Metadata 필터 추출
+        filters = self._extract_metadata_filters(query)
+        
+        # 3단계: 검색
         contexts = self._retrieve(query, transformed_query=transformed_query)
         
-        # 3단계: 프롬프트 생성 (원본 질문 사용)
+        # 4단계: 프롬프트 생성 (원본 질문 사용)
         messages = self._build_prompt(query, contexts)
 
         resp = self.client.chat.completions.create(
@@ -246,4 +400,5 @@ class RAGChain:
             "contexts": contexts,
             "original_query": query,
             "transformed_query": transformed_query if transformed_query != query else None,
+            "metadata_filters": filters if filters else None,
         }

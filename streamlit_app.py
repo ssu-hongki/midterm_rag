@@ -88,12 +88,34 @@ def handle_query(query: str):
         try:
             result = rag_chain.ask(query)
             
-            # 변환된 질문 표시 (있는 경우)
-            if result.get("transformed_query"):
-                with st.expander("🔍 질문 변환 정보", expanded=False):
-                    st.markdown(f"**원본 질문:** {result.get('original_query')}")
-                    st.markdown(f"**변환된 질문:** {result.get('transformed_query')}")
-                    st.caption("질문이 더 명확하고 검색하기 좋은 형태로 자동 변환되었습니다.")
+            # 변환된 질문 및 필터 정보 표시
+            if result.get("transformed_query") or result.get("metadata_filters"):
+                with st.expander("🔍 검색 정보", expanded=False):
+                    if result.get("transformed_query"):
+                        st.markdown(f"**원본 질문:** {result.get('original_query')}")
+                        st.markdown(f"**변환된 질문:** {result.get('transformed_query')}")
+                        st.caption("질문이 더 명확하고 검색하기 좋은 형태로 자동 변환되었습니다.")
+                    
+                    if result.get("metadata_filters"):
+                        st.markdown("**적용된 필터:**")
+                        filters = result.get("metadata_filters")
+                        filter_items = []
+                        if filters.get("수강대상학과"):
+                            filter_items.append(f"수강대상학과: {filters['수강대상학과']}")
+                        if filters.get("학년"):
+                            filter_items.append(f"학년: {filters['학년']}")
+                        if filters.get("강좌명") or filters.get("강좌명_키워드"):
+                            강좌명 = filters.get("강좌명") or filters.get("강좌명_키워드")
+                            filter_items.append(f"강좌명: {강좌명}")
+                        if filters.get("담당교수"):
+                            filter_items.append(f"담당교수: {filters['담당교수']}")
+                        if filters.get("과목코드"):
+                            filter_items.append(f"과목코드: {filters['과목코드']}")
+                        
+                        if filter_items:
+                            for item in filter_items:
+                                st.markdown(f"- {item}")
+                        st.caption("metadata 필터링이 적용되어 관련 강의만 검색되었습니다.")
             
             # 답변 표시
             st.markdown("### 💬 답변")
