@@ -5,6 +5,15 @@ import re
 import json
 from pathlib import Path
 import pdfplumber
+import tempfile
+import os
+
+try:
+    import gdown
+    GDOWN_AVAILABLE = True
+except ImportError:
+    GDOWN_AVAILABLE = False
+    print("⚠ 경고: gdown이 설치되지 않았습니다. 구글 드라이브 다운로드 기능을 사용하려면 'pip install gdown'을 실행하세요.")
 
 # -------------------------------
 # 공용 함수
@@ -219,15 +228,108 @@ def process_single_pdf(pdf_path: Path):
     return chunk_payload
 
 # -------------------------------
-# 5) 여러 PDF 한 번에 처리
+# 5) 구글 드라이브에서 PDF 다운로드
+# -------------------------------
+def is_google_drive_folder(url: str) -> bool:
+    """URL이 구글 드라이브 폴더 링크인지 확인합니다."""
+    return "/drive/folders/" in url.lower() or "/folders/" in url.lower()
+
+def is_google_drive_url(url: str) -> bool:
+    """URL이 구글 드라이브 링크인지 확인합니다."""
+    return "drive.google.com" in url.lower()
+
+def download_from_google_drive(google_drive_url: str, output_dir: Path = Path("data/pdfs")) -> list[Path]:
+    """
+    구글 드라이브 링크에서 PDF 파일 또는 폴더를 다운로드합니다.
+    
+    Args:
+        google_drive_url: 구글 드라이브 공유 링크 
+            - 파일: https://drive.google.com/file/d/FILE_ID/view?usp=sharing
+            - 폴더: https://drive.google.com/drive/folders/FOLDER_ID?usp=drive_link
+        output_dir: 다운로드할 디렉토리
+    
+    Returns:
+        다운로드된 파일들의 Path 객체 리스트
+    """
+    if not GDOWN_AVAILABLE:
+        raise ImportError("gdown이 설치되지 않았습니다. 'pip install gdown'을 실행하세요.")
+    
+    output_dir.mkdir(parents=True, exist_ok=True)
+    downloaded_files = []
+    
+    try:
+        if is_google_drive_folder(google_drive_url):
+            # 폴더 다운로드
+            print(f"📁 구글 드라이브 폴더에서 다운로드 중...")
+            # gdown의 download_folder는 폴더 ID를 사용
+            # URL에서 폴더 ID 추출
+            folder_id = None
+            if "/folders/" in google_drive_url:
+                parts = google_drive_url.split("/folders/")
+                if len(parts) > 1:
+                    folder_id = parts[1].split("?")[0].split("&")[0]
+            
+            if not folder_id:
+                raise ValueError("폴더 ID를 추출할 수 없습니다. 올바른 구글 드라이브 폴더 링크를 제공하세요.")
+            
+            # 폴더 다운로드 (PDF 파일만)
+            folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
+            gdown.download_folder(folder_url, output=str(output_dir), quiet=False, use_cookies=False)
+            
+            # 다운로드된 PDF 파일 찾기
+            for pdf_path in output_dir.glob("*.pdf"):
+                if pdf_path not in downloaded_files:
+                    downloaded_files.append(pdf_path)
+                    print(f"  ✅ 다운로드 완료: {pdf_path.name}")
+        else:
+            # 단일 파일 다운로드
+            print(f"📄 구글 드라이브 파일에서 다운로드 중...")
+            # 임시 파일로 다운로드
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                temp_path = tmp_file.name
+            
+            try:
+                gdown.download(google_drive_url, temp_path, fuzzy=True, quiet=False)
+                
+                # 파일명 추출
+                filename = f"gdrive_{hash(google_drive_url) % 10000}.pdf"
+                output_path = output_dir / filename
+                
+                # 임시 파일을 최종 위치로 이동
+                os.rename(temp_path, str(output_path))
+                downloaded_files.append(output_path)
+                print(f"  ✅ 다운로드 완료: {output_path.name}")
+            except Exception as e:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                raise e
+        
+        return downloaded_files
+    except Exception as e:
+        raise Exception(f"구글 드라이브 다운로드 실패: {e}")
+
+# -------------------------------
+# 6) 여러 PDF 한 번에 처리 (로컬 + 구글 드라이브 지원)
 # -------------------------------
 def process_all_pdfs(
     input_dir: Path = Path("data/pdfs"),
-    output_path: Path = Path("data/processed/course_chunks.json")
+    output_path: Path = Path("data/processed/course_chunks.json"),
+    google_drive_urls: list = None
 ):
+    """
+    로컬 폴더와 구글 드라이브에서 PDF를 처리합니다.
+    
+    Args:
+        input_dir: 로컬 PDF 폴더 경로
+        output_path: 출력 JSON 파일 경로
+        google_drive_urls: 구글 드라이브 링크 리스트 (선택사항)
+    """
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    input_dir.mkdir(parents=True, exist_ok=True)
 
     all_chunks = []
+    
+    # 1. 로컬 폴더의 PDF 처리
     for pdf_path in sorted(input_dir.glob("*.pdf")):
         print(f"▶ Processing: {pdf_path.name}")
         try:
@@ -235,6 +337,31 @@ def process_all_pdfs(
             all_chunks.extend(chunks)
         except Exception as e:
             print(f"  ⚠ {pdf_path.name} 처리 중 오류: {e}")
+    
+    # 2. 구글 드라이브 링크 처리
+    if google_drive_urls:
+        if not GDOWN_AVAILABLE:
+            print("⚠ 경고: gdown이 설치되지 않아 구글 드라이브 링크를 처리할 수 없습니다.")
+        else:
+            for url in google_drive_urls:
+                if not is_google_drive_url(url):
+                    print(f"⚠ 경고: 유효하지 않은 구글 드라이브 링크입니다: {url}")
+                    continue
+                
+                try:
+                    print(f"\n▶ 구글 드라이브에서 다운로드 중: {url}")
+                    downloaded_paths = download_from_google_drive(url, input_dir)
+                    
+                    # 다운로드된 각 PDF 파일 처리
+                    for downloaded_path in downloaded_paths:
+                        try:
+                            print(f"  ▶ Processing: {downloaded_path.name}")
+                            chunks = process_single_pdf(downloaded_path)
+                            all_chunks.extend(chunks)
+                        except Exception as e:
+                            print(f"    ⚠ {downloaded_path.name} 처리 중 오류: {e}")
+                except Exception as e:
+                    print(f"  ⚠ 구글 드라이브 링크 처리 중 오류 ({url}): {e}")
 
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(all_chunks, f, ensure_ascii=False, indent=2)
@@ -242,4 +369,11 @@ def process_all_pdfs(
     print(f"\n✅ 총 {len(all_chunks)}개 청크 저장 → {output_path}")
 
 if __name__ == "__main__":
-    process_all_pdfs()
+    # 구글 드라이브 폴더 링크 사용
+    google_drive_urls = [
+        "https://drive.google.com/drive/folders/1fsqg3UR9RfNYJQQttrJRNpmT0gNXWyki?usp=drive_link"
+    ]
+    process_all_pdfs(google_drive_urls=google_drive_urls)
+    
+    # 또는 로컬 폴더만 처리하려면 위의 google_drive_urls 부분을 주석 처리하고 아래 주석을 해제하세요
+    # process_all_pdfs()

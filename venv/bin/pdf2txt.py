@@ -1,4 +1,4 @@
-#!/Users/hongki/Desktop/vscode_workspace/python_workspace/3-2/NLP/midterm_rag/venv/bin/python3.11
+#!/Users/usbinn/Documents/GitHub/midterm_rag/venv/bin/python3.11
 """A command line tool for extracting text and images from PDF and
 output it to plain text, html, xml or tags."""
 import argparse

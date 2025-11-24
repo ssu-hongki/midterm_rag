@@ -33,7 +33,7 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV /Users/hongki/Desktop/vscode_workspace/python_workspace/3-2/NLP/midterm_rag/venv
+set -gx VIRTUAL_ENV /Users/usbinn/Documents/GitHub/midterm_rag/venv
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/"bin $PATH

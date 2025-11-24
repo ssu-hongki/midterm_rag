@@ -1,4 +1,4 @@
-#!/Users/hongki/Desktop/vscode_workspace/python_workspace/3-2/NLP/midterm_rag/venv/bin/python3.11
+#!/Users/usbinn/Documents/GitHub/midterm_rag/venv/bin/python3.11
 import sys
 from rsa.cli import verify
 if __name__ == '__main__':

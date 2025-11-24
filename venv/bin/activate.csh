@@ -8,7 +8,7 @@ alias deactivate 'test $?_OLD_VIRTUAL_PATH != 0 && setenv PATH "$_OLD_VIRTUAL_PA
 # Unset irrelevant variables.
 deactivate nondestructive
 
-setenv VIRTUAL_ENV /Users/hongki/Desktop/vscode_workspace/python_workspace/3-2/NLP/midterm_rag/venv
+setenv VIRTUAL_ENV /Users/usbinn/Documents/GitHub/midterm_rag/venv
 
 set _OLD_VIRTUAL_PATH="$PATH"
 setenv PATH "$VIRTUAL_ENV/"bin":$PATH"
