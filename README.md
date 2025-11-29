@@ -1,4 +1,4 @@
-git clone https://github.com/hongki/midterm_rag.git
+git clone https://github.com/ssu-hongki/midterm_rag.git
 
 cd midterm_rag
 
