@@ -51,10 +51,33 @@ def is_basic(tbl):
 # -------------------------------
 def collect_tables(pdf_path: Path):
     buckets = {"basic": [], "goals": [], "eval": [], "texts": [], "weekly": []}
-
+    table_settings = {
+        "vertical_strategy": "lines",
+        "horizontal_strategy": "lines",
+        "explicit_vertical_lines": [],
+        "explicit_horizontal_lines": [],
+        "snap_tolerance": 3, 
+        "join_tolerance": 3, 
+        "edge_min_length": 3, 
+        "min_words_vertical": 3, 
+        "min_words_horizontal": 1,
+        "intersection_tolerance": 3,
+        "text_tolerance": 3, 
+        "text_x_tolerance": 3,
+        "text_y_tolerance": 3,
+    }
     with pdfplumber.open(str(pdf_path)) as pdf:
         for page in pdf.pages:
-            tables = page.extract_tables() or []
+            tables = page.extract_tables(table_settings) or []
+
+            if not tables:
+                fallback_settings = {
+                    "vertical_strategy": "text",
+                    "horizontal_strategy": "text",
+                    "snap_tolerance": 5,
+                    "join_tolerance": 5,
+                }
+                tables = page.extract_tables(fallback_settings) or []
             for tbl in tables:
                 if not tbl or not tbl[0]:
                     continue
@@ -78,7 +101,7 @@ def parse_basic_info(tables):
     info = {}
     for t in tables:
         for row in t:
-            cells = [norm(c) for c in row if c]
+            cells = [norm(c) if c else "" for c in row]
             for i in range(0, len(cells), 2):
                 if i + 1 < len(cells):
                     key = re.sub(r"\(.*?\)", "", cells[i]).strip()
@@ -99,27 +122,41 @@ def parse_eval(tables):
     d = {}
     for t in tables:
         for row in t[1:]:
-            item = norm(row[0])
-            max_s = norm(row[1])
-            ratio = norm(row[2])
-            try:
-                max_s = float(max_s)
-            except Exception:
-                max_s = None
-            try:
-                ratio = float(ratio) / 100.0
-            except Exception:
-                ratio = None
+            if not row or len(row) < 3:
+                continue
+            item = norm(row[0]) if row[0] else ""
+            max_s = norm(row[1]) if len(row) > 1 and row[1] else ""
+            ratio = norm(row[2]) if len(row) > 2 and row[2] else ""
+            
+            max_score_val = None
+            ratio_val = None
+            
+            if max_s:
+                try:
+                    max_score_val = float(max_s)
+                except Exception:
+                    pass
+            
+            if ratio:
+                try:
+                    ratio_val = float(ratio) / 100.0
+                except Exception:
+                    pass
+            
             if item:
-                d[item] = {"max_score": max_s, "ratio": ratio}
+                d[item] = {"max_score": max_score_val, "ratio": ratio_val}
     return d
 
 def parse_texts(tables):
     res = {"주교재": None, "참고교재": None, "학습준비사항": None, "수강학생 유의사항": None}
     for t in tables:
         for row in t:
-            k = norm((row[0] or "")).replace("\n", "")
-            v = norm(row[1]) if len(row) > 1 else ""
+            if not row or len(row) < 1:
+                continue
+            k = norm(row[0]) if row[0] else ""
+            k = k.replace("\n", "")
+            v = norm(row[1]) if len(row) > 1 and row[1] else ""
+
             if "주교재" in k:
                 res["주교재"] = (res["주교재"] + "\n" if res["주교재"] else "") + v
             elif "참고교재" in k:
@@ -136,16 +173,20 @@ def parse_weekly(tables):
         for row in t[1:]:
             if not row or len(row) < 2:
                 continue
-            week = norm(row[0])
+            
+            week = norm(row[0]) if row[0] else ""
             wn = re.sub(r"[^0-9]", "", week)
             if not wn:
                 continue
 
-            keyword = norm(row[1])
-            desc = norm(row[2]) if len(row) > 2 else ""
-            method = norm(row[3]) if len(row) > 3 else ""
-            texts = norm(row[4]) if len(row) > 4 else ""
+            keyword = norm(row[1]) if len(row) > 1 and row[1] else ""
+            desc = norm(row[2]) if len(row) > 2 and row[2] else ""
+            method = norm(row[3]) if len(row) > 3 and row[3] else ""
+            texts = norm(row[4]) if len(row) > 4 and row[4] else ""
 
+            if not keyword:
+                continue
+            
             sent = f"{wn}주차 강의 주제는 {keyword}입니다."
             if desc:
                 sent += f" 주요 학습 내용은 {desc}입니다."
