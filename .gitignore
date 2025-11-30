@@ -1,5 +1,5 @@
 .env
 *.env
-data/*
+data/pdfs/*
 __pycache__/*
 venv/*
