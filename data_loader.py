@@ -1,4 +1,3 @@
-# data_loader.py
 # -*- coding: utf-8 -*-
 
 from dataclasses import dataclass
@@ -8,8 +7,7 @@ from typing import List, Dict, Any
 
 @dataclass
 class Document:
-    id: str        # "파일명_chunkid" 형태
-    text: str
+    id: str
     metadata: Dict[str, Any]
 
 def load_documents(
@@ -24,11 +22,24 @@ def load_documents(
     docs: List[Document] = []
     for idx, item in enumerate(raw):
         doc_id = f"{item.get('source_pdf','unknown')}_chunk{item.get('chunk_id', idx+1)}"
-        text = item["text"]
         meta = dict(item.get("metadata", {}))
-        meta["source_pdf"] = item.get("source_pdf")
         meta["chunk_id"] = item.get("chunk_id")
-        docs.append(Document(id=doc_id, text=text, metadata=meta))
+        meta["source_pdf"] = item.get("source_pdf")
+        docs.append(Document(id=doc_id, metadata=meta))
 
-    print(f"📚 Loaded {len(docs)} documents from {json_path}")
     return docs
+
+def load_processed_chunks(
+    chunk_path: Path = Path("data/processed/course_chunks.json")
+) -> List[Document]:
+    with open(chunk_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    documents = []
+    for item in data:
+        documents.append(Document(
+            id=str(item.get("chunk_id", "")),
+            metadata=item.get("metadata", {})
+        ))
+
+    return documents

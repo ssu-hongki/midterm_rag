@@ -1,4 +1,3 @@
-# streamlit_app.py
 # -*- coding: utf-8 -*-
 
 import os
@@ -15,7 +14,6 @@ PROCESSED_JSON_PATH = Path("data/processed/course_chunks.json")
 
 
 def ensure_vector_store_exists():
-    """벡터 스토어가 존재하는지 확인하고, 없으면 생성합니다."""
     emb_path = VECTOR_STORE_DIR / "embeddings.npy"
     meta_path = VECTOR_STORE_DIR / "metadatas.json"
     
@@ -25,8 +23,6 @@ def ensure_vector_store_exists():
 
 
 def initialize_rag_chain(use_reranking: bool = True, use_query_expansion: bool = True):
-    """RAG 체인을 초기화하고 세션 상태에 저장합니다."""
-    # 설정이 변경되었거나 체인이 없으면 재초기화
     current_reranking = st.session_state.get("use_reranking", True)
     current_expansion = st.session_state.get("use_query_expansion", True)
     if ("rag_chain" in st.session_state and 
@@ -51,7 +47,6 @@ def initialize_rag_chain(use_reranking: bool = True, use_query_expansion: bool =
 
 
 def build_vector_store_from_documents():
-    """문서를 로드하고 벡터 스토어를 구축합니다."""
     if not PROCESSED_JSON_PATH.exists():
         st.error(f"전처리된 JSON 파일이 없습니다: {PROCESSED_JSON_PATH}")
         st.info("먼저 'preprocess_pdfs.py'를 실행하여 PDF를 전처리해주세요.")
@@ -68,7 +63,6 @@ def build_vector_store_from_documents():
         try:
             build_vector_store(documents, store_dir=VECTOR_STORE_DIR)
             st.success("벡터 스토어 구축 완료!")
-            # 세션 상태 초기화하여 다시 로드하도록 함
             if "rag_chain" in st.session_state:
                 del st.session_state["rag_chain"]
             return True
@@ -78,7 +72,6 @@ def build_vector_store_from_documents():
 
 
 def handle_query(query: str):
-    """질문을 처리하고 답변을 표시합니다."""
     rag_chain = st.session_state.get("rag_chain")
     if rag_chain is None:
         st.warning("RAG 체인이 초기화되지 않았습니다.")
@@ -88,7 +81,6 @@ def handle_query(query: str):
         try:
             result = rag_chain.ask(query)
             
-            # 변환된 질문 및 필터 정보 표시
             if result.get("transformed_query") or result.get("metadata_filters"):
                 with st.expander("🔍 검색 정보", expanded=False):
                     if result.get("transformed_query"):
@@ -117,11 +109,15 @@ def handle_query(query: str):
                                 st.markdown(f"- {item}")
                         st.caption("metadata 필터링이 적용되어 관련 강의만 검색되었습니다.")
             
-            # 답변 표시
             st.markdown("### 💬 답변")
             st.write(result["answer"])
+
+            print("\n" + "="*80)
+            print("💬 답변:")
+            print("="*80)
+            print(result["answer"])
+            print("="*80 + "\n")
             
-            # 출처 표시
             contexts = result.get("contexts", [])
             if contexts:
                 st.markdown("### 📚 참고한 컨텍스트")
@@ -133,7 +129,6 @@ def handle_query(query: str):
                     강좌명 = meta.get("강좌명", "")
                     과목코드 = meta.get("과목코드", "")
                     
-                    # 중복 제거
                     key = (source_pdf, chunk_id)
                     if key in seen_sources:
                         continue
@@ -149,12 +144,11 @@ def handle_query(query: str):
                     if score is not None:
                         source_info += f" · 유사도: {score:.3f}"
                     
-                    # 청크 내용도 함께 표시
                     with st.expander(f"{i}. {source_info}", expanded=False):
                         chunk_text = ctx.get("text", "내용 없음")
                         st.markdown("**청크 내용:**")
                         st.text_area(
-                            "",
+                            "청크 내용",
                             value=chunk_text,
                             height=150,
                             disabled=True,
@@ -162,7 +156,6 @@ def handle_query(query: str):
                             key=f"chunk_{i}_{chunk_id}_{hash(chunk_text)}"
                         )
                         
-                        # 매칭된 질문들 표시 (확장된 경우)
                         if ctx.get("matched_queries") and len(ctx.get("matched_queries", [])) > 1:
                             st.caption(f"매칭된 질문: {', '.join(ctx['matched_queries'][:2])}")
         except Exception as e:
@@ -176,18 +169,15 @@ def main():
         layout="wide"
     )
     
-    # 환경 변수 로드
     load_dotenv()
     if not os.getenv("OPENAI_API_KEY"):
         st.error("⚠️ OPENAI_API_KEY가 설정되어 있지 않습니다.")
         st.info("프로젝트 루트에 .env 파일을 생성하고 OPENAI_API_KEY를 설정해주세요.")
         st.stop()
     
-    # 사이드바
     with st.sidebar:
         st.title("⚙️ 설정")
         
-        # 벡터 스토어 상태 확인
         if ensure_vector_store_exists():
             st.success("✅ 벡터 스토어가 준비되어 있습니다.")
         else:
@@ -225,14 +215,11 @@ def main():
         - 재랭킹 기능은 검색 정확도를 향상시킵니다
         """)
     
-    # 메인 영역
     st.title("📘 강의계획서 RAG 챗봇")
     st.markdown("강의계획서 데이터를 기반으로 질문에 답변하는 챗봇입니다.")
     
-    # RAG 체인 초기화 (설정 적용)
     initialize_rag_chain(use_reranking=use_reranking, use_query_expansion=use_query_expansion)
     
-    # 질문 입력 폼
     with st.form(key="query_form", clear_on_submit=False):
         query = st.text_area(
             "질문을 입력하세요",
@@ -241,7 +228,6 @@ def main():
         )
         submitted = st.form_submit_button("질문하기", type="primary", use_container_width=True)
     
-    # 질문 처리
     if submitted:
         if query.strip():
             handle_query(query.strip())
