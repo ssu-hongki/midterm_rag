@@ -2,10 +2,10 @@
 
 from typing import List, Dict, Any, Optional
 from openai import OpenAI
+import numpy as np
 
 from utils import load_env, top_k_similar, initialize_bm25, hybrid_search
 from vector_store import load_vector_store
-import numpy as np
 
 ANSWER_MODEL = "gpt-4o-mini"
 
