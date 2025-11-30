@@ -1,4 +1,3 @@
-# rag_chain.py
 # -*- coding: utf-8 -*-
 
 from typing import List, Dict, Any, Optional
@@ -6,22 +5,19 @@ from openai import OpenAI
 
 from utils import load_env, top_k_similar, initialize_bm25, hybrid_search
 from vector_store import load_vector_store
+import numpy as np
 
-ANSWER_MODEL = "gpt-4o-mini"  # 과제 요구에 맞게 바꿔도 됨
+ANSWER_MODEL = "gpt-4o-mini"
 
-# Cross-encoder는 필요할 때만 로드 (lazy loading)
 _cross_encoder = None
 
 def get_cross_encoder():
-    """Cross-encoder 모델을 lazy loading으로 가져옵니다."""
     global _cross_encoder
     if _cross_encoder is None:
         try:
             from sentence_transformers import CrossEncoder
-            # 한국어 지원이 좋은 모델 사용
-            _cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+            _cross_encoder = CrossEncoder('cross-encoder/mmarco-mMiniLMv2-L12-H384-v1')
         except ImportError:
-            print("⚠️ sentence-transformers가 설치되지 않았습니다. 재랭킹 기능을 사용할 수 없습니다.")
             return None
     return _cross_encoder
 
@@ -35,17 +31,12 @@ class RAGChain:
         self.use_hybrid_search = use_hybrid_search
         self.embeddings, self.metadatas = load_vector_store()
         
-        # BM25 초기화 (하이브리드 검색용)
         if self.use_hybrid_search:
             documents = [meta.get("text", "") for meta in self.metadatas]
-            if initialize_bm25(documents):
-                print("✅ BM25 인덱스 초기화 완료")
-            else:
-                print("⚠️ BM25 초기화 실패. 벡터 검색만 사용합니다.")
-                self.use_hybrid_search = False
+            initialize_bm25(documents)
+            self.use_hybrid_search = False
 
     def _transform_query(self, query: str) -> str:
-        """질문을 더 명확하고 검색하기 좋은 형태로 변환합니다."""
         prompt = f"""다음 질문을 강의계획서 검색에 적합한 명확한 질문으로 변환해주세요.
                     - 오타나 문법 오류를 수정하세요
                     - 모호한 표현을 구체적으로 바꾸세요
@@ -67,15 +58,12 @@ class RAGChain:
                 max_tokens=200
             )
             transformed = resp.choices[0].message.content.strip()
-            # 따옴표 제거
             transformed = transformed.strip('"').strip("'")
             return transformed
-        except Exception as e:
-            print(f"⚠️ 질문 변환 실패: {e}. 원본 질문 사용.")
+        except Exception:
             return query
 
     def _expand_query(self, query: str) -> List[str]:
-        """질문을 여러 관점에서 확장하여 다중 질문을 생성합니다."""
         prompt = f"""다음 질문을 강의계획서 검색에 도움이 되도록 2-3개의 관련 질문으로 확장해주세요.
 각 질문은 서로 다른 관점이나 표현을 사용하되, 원래 질문의 핵심 의도를 유지해야 합니다.
 
@@ -94,58 +82,46 @@ class RAGChain:
                 max_tokens=300
             )
             expanded_text = resp.choices[0].message.content.strip()
-            # 줄바꿈으로 분리하고 정제
             queries = [q.strip().strip('-').strip() for q in expanded_text.split('\n') if q.strip()]
-            # 원본 질문도 포함
             queries.insert(0, query)
-            # 중복 제거
             seen = set()
             unique_queries = []
             for q in queries:
                 if q and q not in seen:
                     seen.add(q)
                     unique_queries.append(q)
-            return unique_queries[:3]  # 최대 3개
+            return unique_queries[:3]
         except Exception as e:
-            print(f"⚠️ 질문 확장 실패: {e}. 원본 질문만 사용.")
+            print(f"질문 확장 실패: {e}. 원본 질문만 사용.")
             return [query]
 
     def _extract_metadata_filters(self, query: str) -> Dict[str, Any]:
-        """질문에서 metadata 필터 조건을 추출합니다."""
         filters = {}
         
-        # 학과/학부 필터 추출
-        학과_키워드 = ["학부", "학과", "대상"]
-        학과_목록 = ["ai융합", "ai융합학부", "컴퓨터", "컴퓨터학부", "소프트웨어", "전자정보", "전자정보공학부"]
-        
-        query_lower = query.lower()
-        for 학과 in 학과_목록:
-            if 학과 in query_lower:
-                filters["수강대상학과"] = 학과
-                break
-        
-        # 학년 필터 추출
         import re
-        학년_패턴 = r"(\d)학년"
-        match = re.search(학년_패턴, query)
+        query_lower = query.lower()
+
+        grade_pattern = r"(\d)학년"
+        match = re.search(grade_pattern, query)
         if match:
-            학년 = match.group(1)
-            filters["학년"] = f"{학년}학년"
+            grade = match.group(1)
+            filters["학년"] = f"{grade}학년"
         
-        # 강좌명 필터 추출 (간단한 키워드 매칭)
-        강좌명_키워드 = ["자연언어처리", "nlp", "데이터베이스", "db", "프로그래밍", "프로그래밍및실습"]
-        for 키워드 in 강좌명_키워드:
-            if 키워드 in query_lower:
-                if "nlp" in query_lower or "자연언어처리" in query_lower:
-                    filters["강좌명_키워드"] = "자연언어처리"
-                elif "db" in query_lower or "데이터베이스" in query_lower:
-                    filters["강좌명_키워드"] = "데이터베이스"
-                elif "프로그래밍" in query_lower:
-                    filters["강좌명_키워드"] = "프로그래밍"
+        course_keyword_map = {
+            "자연언어처리": ["자연언어처리", "nlp"],
+            "데이터베이스": ["데이터베이스", "db"],
+            "프로그래밍": ["프로그래밍"],
+            "컴퓨터비전": ["컴퓨터비전", "computer vision", "cv"],
+            "머신러닝": ["머신러닝", "machine learning", "ml"],
+            "딥러닝": ["딥러닝", "deep learning", "dl"],
+        }
+        
+        for course_name, keywords in course_keyword_map.items():
+            if any(keyword in query_lower for keyword in keywords):
+                filters["강좌명_키워드"] = course_name
                 break
         
-        # LLM을 사용한 더 정확한 필터 추출
-        if not filters:  # 간단한 추출로 필터를 못 찾았을 때만 LLM 사용
+        if not filters:
             try:
                 prompt = f"""다음 질문에서 강의계획서 검색에 필요한 필터 조건을 추출해주세요.
 질문: {query}
@@ -174,14 +150,13 @@ class RAGChain:
                 extracted = json.loads(resp.choices[0].message.content.strip())
                 filters.update({k: v for k, v in extracted.items() if v and v != "null"})
             except Exception as e:
-                print(f"⚠️ 필터 추출 실패: {e}")
+                print(f"필터 추출 실패: {e}")
         
         return filters
 
     def _filter_by_metadata(self, filters: Dict[str, Any]) -> List[int]:
-        """metadata 필터 조건에 맞는 청크 인덱스를 반환합니다."""
         if not filters:
-            return list(range(len(self.metadatas)))  # 필터가 없으면 전체
+            return list(range(len(self.metadatas)))
         
         filtered_indices = []
         
@@ -189,56 +164,35 @@ class RAGChain:
             metadata = meta_item.get("metadata", {})
             match = True
             
-            # 수강대상학과 필터
-            if "수강대상학과" in filters:
-                수강대상 = metadata.get("수강대상학과", "").lower()
-                필터_학과 = filters["수강대상학과"].lower()
-                # "ai융합" -> "ai융합학부" 매칭
-                if "ai융합" in 필터_학과:
-                    if "ai융합" not in 수강대상:
-                        match = False
-                elif "컴퓨터" in 필터_학과:
-                    if "컴퓨터" not in 수강대상:
-                        match = False
-                else:
-                    if 필터_학과 not in 수강대상:
-                        match = False
-            
-            # 학년 필터
             if match and "학년" in filters:
-                수강대상 = metadata.get("수강대상학과", "").lower()
-                필터_학년 = filters["학년"].lower()
-                # 수강대상에 학년 정보가 포함되어 있는지 확인
-                # "3학년" 또는 "3" 모두 매칭
-                학년_숫자 = 필터_학년.replace("학년", "").strip()
-                if 학년_숫자 not in 수강대상 and 필터_학년 not in 수강대상:
+                target_dept = metadata.get("수강대상학과", "").lower()
+                filter_grade = filters["학년"].lower()
+                grade_num = filter_grade.replace("학년", "").strip()
+                if grade_num not in target_dept and filter_grade not in target_dept:
                     match = False
             
-            # 강좌명 필터
             if match and "강좌명_키워드" in filters:
-                강좌명 = metadata.get("강좌명", "").lower()
-                필터_키워드 = filters["강좌명_키워드"].lower()
-                if 필터_키워드 not in 강좌명:
+                course_name = metadata.get("강좌명", "").lower()
+                filter_keyword = filters["강좌명_키워드"].lower()
+                if filter_keyword not in course_name:
                     match = False
             
             if match and "강좌명" in filters:
-                강좌명 = metadata.get("강좌명", "").lower()
-                필터_강좌명 = filters["강좌명"].lower()
-                if 필터_강좌명 not in 강좌명:
+                course_name = metadata.get("강좌명", "").lower()
+                filter_course = filters["강좌명"].lower()
+                if filter_course not in course_name:
                     match = False
             
-            # 담당교수 필터
             if match and "담당교수" in filters:
-                교수 = metadata.get("담당교수", "").lower()
-                필터_교수 = filters["담당교수"].lower()
-                if 필터_교수 not in 교수:
+                professor = metadata.get("담당교수", "").lower()
+                filter_prof = filters["담당교수"].lower()
+                if filter_prof not in professor:
                     match = False
             
-            # 과목코드 필터
             if match and "과목코드" in filters:
-                코드 = metadata.get("과목코드", "")
-                필터_코드 = filters["과목코드"]
-                if 필터_코드 not in str(코드):
+                code = metadata.get("과목코드", "")
+                filter_code = filters["과목코드"]
+                if filter_code not in str(code):
                     match = False
             
             if match:
@@ -253,215 +207,268 @@ class RAGChain:
         )
         return resp.data[0].embedding
 
-    def _retrieve(self, query: str, transformed_query: Optional[str] = None) -> List[Dict[str, Any]]:
-        """하이브리드 검색으로 Top-20 후보를 찾고, 재랭킹으로 Top-N을 선택합니다."""
-        search_query = transformed_query if transformed_query else query
+    def _retrieve(
+        self,
+        query: str,
+        transformed_query: Optional[str] = None
+    ):
+        if self.use_query_expansion:
+            expanded_queries = self._expand_query(transformed_query or query)
+            print(f"\n쿼리 확장: {len(expanded_queries)}개")
+            for i, eq in enumerate(expanded_queries, 1):
+                print(f"  {i}. {eq}")
+        else:
+            expanded_queries = [query]
         
-        # 1단계: Metadata 필터링
         filters = self._extract_metadata_filters(query)
-        filtered_indices = self._filter_by_metadata(filters)
         
-        if not filtered_indices:
-            # 필터에 맞는 청크가 없으면 빈 리스트 반환
+        if filters:
+            valid_indices = self._filter_by_metadata(filters)
+            print(f"필터링 결과: {len(valid_indices)}/{len(self.metadatas)}개 문서")
+        else:
+            valid_indices = list(range(len(self.metadatas)))
+            print(f"필터 없음: 전체 {len(self.metadatas)}개 문서 검색")
+        
+        if not valid_indices:
+            print("필터 조건에 맞는 문서가 없습니다!")
             return []
         
-        # 필터링된 청크의 임베딩만 사용
-        filtered_embeddings = self.embeddings[filtered_indices]
-        filtered_metadatas = [self.metadatas[idx] for idx in filtered_indices]
-        index_mapping = {i: original_idx for i, original_idx in enumerate(filtered_indices)}
+        filtered_embeddings = self.embeddings[valid_indices]
+        filtered_metadatas = [self.metadatas[i] for i in valid_indices]
         
-        # Query Expansion: 다중 질문으로 검색
-        if self.use_query_expansion:
-            expanded_queries = self._expand_query(search_query)
-        else:
-            expanded_queries = [search_query]
-        
-        # 각 확장된 질문으로 검색하고 결과 통합
         all_candidates = {}
-        # 재순위를 사용할 경우 Top-20 후보, 아니면 k*2
-        candidate_k = 20 if self.use_reranking else self.k * 2
+        candidate_k = 20
         
-        for eq in expanded_queries:
-            q_vec = self._embed_query(eq)
+        for i, eq in enumerate(expanded_queries, 1):
+            eq_emb = self._embed_query(eq)
             
-            # 하이브리드 검색 (BM25 + Vector)
-            # 필터링이 적용된 경우 BM25 인덱스 불일치 문제로 벡터 검색만 사용
-            if self.use_hybrid_search and len(filtered_indices) == len(self.metadatas):
-                # 필터링이 없는 경우(전체 문서)만 하이브리드 검색 사용
-                hybrid_results = hybrid_search(
+            if self.use_hybrid_search:
+                eq_results = hybrid_search(
                     query=eq,
-                    query_embedding=q_vec,
-                    embeddings=self.embeddings,
-                    metadatas=self.metadatas,
-                    k=min(candidate_k, len(self.embeddings)),
-                    alpha=0.5  # 벡터와 BM25 점수의 가중치 (0.5 = 동일 비중)
+                    query_embedding=np.array(eq_emb),
+                    embeddings=filtered_embeddings,
+                    metadatas=filtered_metadatas,
+                    k=candidate_k,
+                    alpha=0.5
                 )
-                
-                for item in hybrid_results:
-                    item_id = item["id"]
-                    if item_id not in all_candidates:
-                        item["matched_queries"] = [eq]
-                        all_candidates[item_id] = item
-                    else:
-                        # 여러 질문에서 매칭된 경우 점수 평균
-                        all_candidates[item_id]["vector_score"] = (
-                            all_candidates[item_id]["vector_score"] + item["vector_score"]
-                        ) / 2
-                        all_candidates[item_id]["bm25_score"] = (
-                            all_candidates[item_id]["bm25_score"] + item["bm25_score"]
-                        ) / 2
-                        all_candidates[item_id]["hybrid_score"] = (
-                            all_candidates[item_id]["hybrid_score"] + item["hybrid_score"]
-                        ) / 2
-                        all_candidates[item_id]["score"] = all_candidates[item_id]["hybrid_score"]
-                        if eq not in all_candidates[item_id]["matched_queries"]:
-                            all_candidates[item_id]["matched_queries"].append(eq)
+                print(f"  쿼리 {i} 하이브리드 검색: {len(eq_results)}개 발견")
             else:
-                # 벡터 검색만 사용 (필터링이 적용된 경우 또는 하이브리드 비활성화)
-                scores, local_idxs = top_k_similar(filtered_embeddings, q_vec, k=min(candidate_k, len(filtered_embeddings)))
+                from utils import top_k_similar
+                scores, indices = top_k_similar(
+                    filtered_embeddings,
+                    np.array(eq_emb),
+                    k=min(candidate_k, len(filtered_embeddings))
+                )
+                eq_results = []
+                for score, idx in zip(scores, indices):
+                    eq_results.append({
+                        "metadata": filtered_metadatas[idx],
+                        "score": float(score),
+                        "filtered_idx": idx
+                    })
+                print(f"  쿼리 {i} 벡터 검색: {len(eq_results)}개 발견")
+        
+            before_merge = len(all_candidates)
+            for item in eq_results:
+                if "filtered_idx" in item:
+                    filtered_idx = item["filtered_idx"]
+                else:
+                    item_meta = item.get("metadata", item)
+                    try:
+                        chunk_id = item_meta.get("chunk_id")
+                        filtered_idx = next(
+                            idx for idx, meta in enumerate(filtered_metadatas)
+                            if meta.get("chunk_id") == chunk_id
+                        )
+                    except (StopIteration, KeyError, TypeError):
+                        print(f"    매칭 실패: {item_meta.get('chunk_id', 'unknown')}")
+                        continue
                 
-                for score, local_idx in zip(scores, local_idxs):
-                    original_idx = index_mapping[int(local_idx)]
-                    item_id = self.metadatas[original_idx]["id"]
-                    
-                    if item_id not in all_candidates:
-                        item = dict(self.metadatas[original_idx])
-                        item["vector_score"] = float(score)
-                        item["bm25_score"] = 0.0
-                        item["hybrid_score"] = float(score)
-                        item["score"] = float(score)
-                        item["matched_queries"] = [eq]
-                        all_candidates[item_id] = item
-                    else:
-                        # 여러 질문에서 매칭된 경우 점수 평균
-                        all_candidates[item_id]["vector_score"] = (
-                            all_candidates[item_id]["vector_score"] + float(score)
-                        ) / 2
-                        all_candidates[item_id]["score"] = all_candidates[item_id]["vector_score"]
-                        if eq not in all_candidates[item_id]["matched_queries"]:
-                            all_candidates[item_id]["matched_queries"].append(eq)
+                original_idx = valid_indices[filtered_idx]
+                
+                if original_idx not in all_candidates:
+                    all_candidates[original_idx] = item
+                else:
+                    current_score = item.get("hybrid_score", item.get("score", 0))
+                    existing_score = all_candidates[original_idx].get("hybrid_score", 
+                                    all_candidates[original_idx].get("score", 0))
+                    if current_score > existing_score:
+                        all_candidates[original_idx] = item
+            
+            after_merge = len(all_candidates)
+            print(f"    → 병합 후: {after_merge}개 (새로 추가: {after_merge - before_merge}개)")
         
         candidates = list(all_candidates.values())
-        # 점수로 정렬
-        candidates.sort(key=lambda x: x["score"], reverse=True)
+        candidates.sort(key=lambda x: x.get("hybrid_score", x.get("score", 0)), reverse=True)
         
-        # 2단계: Cross-Encoder 재랭킹 적용
-        # Top-20 후보를 Cross-Encoder로 재평가하여 Top-N(3~5) 선택
         if self.use_reranking and len(candidates) >= self.k:
-            # 후보가 k개 이상이면 재랭킹 적용 (최대 candidate_k개까지)
-            candidates = self._rerank(search_query, candidates[:min(candidate_k, len(candidates))])
+            print(f"재순위 적용 중... ({len(candidates)}개 → 상위 {min(candidate_k, len(candidates))}개 대상)")
+            candidates = self._rerank(query, candidates[:min(candidate_k, len(candidates))])
+            print(f"재순위 완료: {len(candidates)}개")
         
-        # 상위 k개만 반환 (최종 Top-N)
-        return candidates[:self.k]
+        final = candidates[:self.k]
+        return final
 
-    def _rerank_with_llm(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """LLM API를 사용하여 후보들을 재랭킹합니다.
+    def _rerank_with_cross_encoder(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        cross_encoder = get_cross_encoder()
+        if cross_encoder is None:
+            print("Cross-Encoder를 사용할 수 없습니다. 원본 점수 사용.")
+            return candidates
         
-        Cross-Encoder 대신 GPT 모델로 관련성을 평가합니다.
-        """
         if len(candidates) <= self.k:
             return candidates
-
-        # 배치로 처리 (API 호출 최소화)
-        batch_size = 5
-        all_scored = []
-
-        for i in range(0, len(candidates), batch_size):
-            batch = candidates[i:i+batch_size]
+        
+        texts = []
+        for candidate in candidates:
+            metadata = candidate.get("metadata", {})
             
-            # 후보 문서들을 텍스트로 구성
-            docs_text = ""
-            for idx, candidate in enumerate(batch):
-                docs_text += f"\n[문서 {idx+1}]\n{candidate['text'][:500]}...\n"  # 토큰 제한을 위해 500자로 제한
-
-            prompt = f"""다음 질문과 각 문서의 관련성을 0~10 점수로 평가해주세요.
-
-질문: {query}
-
-문서들:
-{docs_text}
-
-각 문서의 관련성 점수를 JSON 배열로 답변해주세요:
-[점수1, 점수2, 점수3, ...]
-
-예시: [8.5, 3.2, 9.1]"""
-
-            try:
-                resp = self.client.chat.completions.create(
-                    model="gpt-4o-mini",  # 비용 절감을 위해 mini 사용
-                    messages=[
-                        {"role": "system", "content": "너는 문서 관련성 평가 전문가야. 점수만 JSON 배열로 답변해."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.1,
-                    max_tokens=100
-                )
+            if 'metadata' in metadata and isinstance(metadata['metadata'], dict):
+                inner_metadata = metadata['metadata']
+            else:
+                inner_metadata = metadata
+            
+            text_parts = []
+            
+            course_name = inner_metadata.get('강좌명', '')
+            if course_name:
+                text_parts.append(f"강좌명: {course_name}")
+                text_parts.append(f"과목: {course_name}")
+                text_parts.append(f"교과목: {course_name}")
+            
+            important_fields = [
+                '담당교수', '교과목 개요', '교육목표', '강의개요', '강의내용',
+                '주요교재', '참고교재(대표)', '수업방법', '평가항목', 
+                '주차별 강의개요', '학습준비사항', '수강학생 유의 및 참고사항',
+                '수강대상학과', '학점', '주당시간', '강좌형식',
+                '필수 선수과목', '권장 선수과목'
+            ]
+            
+            for key in important_fields:
+                if key in inner_metadata and inner_metadata[key]:
+                    value = inner_metadata[key]
+                    if isinstance(value, list):
+                        text_parts.append(f"{key}: {', '.join(str(v) for v in value)}")
+                    elif isinstance(value, dict):
+                        text_parts.append(f"{key}: {str(value)}")
+                    else:
+                        text_parts.append(f"{key}: {value}")
+            
+            for key, value in inner_metadata.items():
+                if key not in important_fields and key not in ['chunk_id', 'source_pdf', '강좌명'] and value:
+                    if not isinstance(value, (list, dict)):
+                        text_parts.append(f"{key}: {value}")
+            
+            text_content = "\n".join(text_parts)
+            
+            if len(text_content) < 100:
+                text_content = str(candidate)[:2000]
+            
+            texts.append(text_content)
+        
+        pairs = [(query, text) for text in texts]
+        
+        try:
+            scores = cross_encoder.predict(pairs)
+            
+            min_score = float(min(scores))
+            max_score = float(max(scores))
+            score_range = max_score - min_score if max_score > min_score else 1.0
+            
+            print(f"\nCross-Encoder 점수 범위: {min_score:.3f} ~ {max_score:.3f}")
+            
+            for candidate, score in zip(candidates, scores):
+                normalized_score = (float(score) - min_score) / score_range
+                candidate["rerank_score"] = normalized_score
                 
-                import json
-                scores_text = resp.choices[0].message.content.strip()
-                # JSON 파싱 시도
-                scores = json.loads(scores_text)
+                hybrid_score = candidate.get("hybrid_score", candidate.get("vector_score", 0))
                 
-                # 점수를 candidates에 추가
-                for candidate, score in zip(batch, scores):
-                    candidate["rerank_score"] = float(score) / 10.0  # 0~1로 정규화
-                    hybrid_score = candidate.get("hybrid_score", candidate.get("vector_score", 0))
-                    candidate["score"] = 0.3 * hybrid_score + 0.7 * candidate["rerank_score"]
-                    all_scored.append(candidate)
-                    
-            except Exception as e:
-                print(f"⚠️ LLM 재랭킹 실패: {e}. 하이브리드 점수 사용")
-                # 재랭킹 실패시 원본 점수 유지
-                for candidate in batch:
-                    candidate["rerank_score"] = candidate.get("hybrid_score", candidate.get("vector_score", 0))
-                    candidate["score"] = candidate["rerank_score"]
-                    all_scored.append(candidate)
-
-        # 점수로 정렬
-        all_scored.sort(key=lambda x: x["score"], reverse=True)
-        return all_scored
+                candidate["score"] = 0.1 * hybrid_score + 0.9 * normalized_score
+            
+            candidates.sort(key=lambda x: x["score"], reverse=True)
+            
+            print(f"\n상위 5개 최종 점수:")
+            for i, cand in enumerate(candidates[:5], 1):
+                meta = cand.get('metadata', {})
+                if 'metadata' in meta:
+                    inner_meta = meta['metadata']
+                else:
+                    inner_meta = meta
+                course_name = inner_meta.get('강좌명', 'unknown')
+                print(f"  {i}. {course_name[:20]:20s} | Hybrid: {cand.get('hybrid_score', 0):.3f}, Rerank: {cand['rerank_score']:.3f}, 최종: {cand['score']:.3f}")
+            
+            return candidates
+            
+        except Exception as e:
+            print(f"Cross-Encoder 재랭킹 실패: {e}. 원본 점수 사용.")
+            import traceback
+            traceback.print_exc()
+            return candidates
 
     def _rerank(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """재랭킹 방법을 선택합니다."""
-        # LLM API 기반 재랭킹 사용
-        return self._rerank_with_llm(query, candidates)
+        return self._rerank_with_cross_encoder(query, candidates)
+
+    def _build_prompt(
+        self,
+        query: str,
+        contexts: List[Dict[str, Any]]
+    ) -> List[Dict[str, str]]:
         
-        # 또는 원본 Cross-Encoder 사용하려면:
-        # cross_encoder = get_cross_encoder()
-        # if cross_encoder is None:
-        #     return self._rerank_with_llm(query, candidates)
-        # ...existing cross-encoder code...
-
-    def _build_prompt(self, query: str, contexts: List[Dict[str, Any]]) -> List[Dict[str, str]]:
-        context_texts = []
-        for c in contexts:
-            src = c["metadata"].get("강좌명") or c["metadata"].get("과목코드") or c.get("id", "")
-            header = f"[출처: {src}]"
+        context_str_list = []
+        for i, c in enumerate(contexts, start=1):
+            metadata = c.get("metadata", {})
             
-            # text와 함께 metadata의 중요한 정보도 포함
-            text_content = c["text"]
-            meta = c.get("metadata", {})
+            if 'metadata' in metadata and isinstance(metadata['metadata'], dict):
+                inner_metadata = metadata['metadata']
+            else:
+                inner_metadata = metadata
             
-            # metadata에서 추가 정보 추출 (text에 없을 수 있는 정보)
-            additional_info = []
-            if meta.get("교수실") and meta["교수실"] != "없음" and "교수실" not in text_content:
-                additional_info.append(f"교수실 연락처: {meta['교수실']}")
-            if meta.get("연락처") and meta["연락처"] != "없음" and meta.get("연락처") != meta.get("교수실") and "연락처" not in text_content:
-                additional_info.append(f"연락처: {meta['연락처']}")
-            if meta.get("이메일") and meta["이메일"] != "없음" and "이메일" not in text_content:
-                additional_info.append(f"이메일: {meta['이메일']}")
+            course_name = inner_metadata.get('강좌명', 'unknown')
+            print(f"  {i}. 강좌명: {course_name}")
             
-            if additional_info:
-                text_content += "\n" + "\n".join(additional_info)
+            text_parts = []
             
-            context_texts.append(header + "\n" + text_content)
-
-        context_block = "\n\n---\n\n".join(context_texts)
+            important_fields = [
+                '강좌명', '담당교수', '교과목 개요', '교육목표', 
+                '주요교재', '참고교재(대표)', '평가항목', 
+                '수강대상학과', '학점', '주당시간', '강좌형식',
+                '필수 선수과목', '권장 선수과목',
+                '학습준비사항', '수강학생 유의 및 참고사항',
+                '주차별 강의개요'
+            ]
+            
+            for key in important_fields:
+                if key in inner_metadata and inner_metadata[key]:
+                    value = inner_metadata[key]
+                    if isinstance(value, list):
+                        if len(value) > 0:
+                            text_parts.append(f"{key}:")
+                            for item in value:
+                                text_parts.append(f"  - {item}")
+                    elif isinstance(value, dict):
+                        text_parts.append(f"{key}: {value}")
+                    else:
+                        text_parts.append(f"{key}: {value}")
+            
+            for key, value in inner_metadata.items():
+                if key not in important_fields and key not in ['chunk_id', 'source_pdf'] and value:
+                    if isinstance(value, (str, int, float)):
+                        text_parts.append(f"{key}: {value}")
+            
+            text_content = "\n".join(text_parts)
+            
+            source_pdf = metadata.get('source_pdf', c.get('source_pdf', 'unknown'))
+            
+            context_str_list.append(
+                f"[문서 {i}] (출처: {source_pdf})\n{text_content}"
+            )
+        
+        context_block = "\n\n---\n\n".join(context_str_list)
 
         system_msg = (
             "너는 숭실대학교 강의계획서 RAG 챗봇이야.\n"
             "아래 제공된 강의계획서 청크 내용만을 근거로 답변하고, "
-            "모르는 내용은 아는 척 하지 말고 모른다고 말해."
+            "모르는 내용은 아는 척 하지 말고 모른다고 말해.\n"
+            "답변할 때는 강좌명, 담당교수, 교육목표, 교재 등 구체적인 정보를 포함해서 자세히 설명해줘."
         )
 
         user_msg = (
@@ -477,16 +484,9 @@ class RAGChain:
         ]
 
     def ask(self, query: str) -> Dict[str, Any]:
-        # 1단계: 질문 변환 (명확하게 만들기)
         transformed_query = self._transform_query(query) if self.use_query_expansion else query
-        
-        # 2단계: Metadata 필터 추출
         filters = self._extract_metadata_filters(query)
-        
-        # 3단계: 검색
         contexts = self._retrieve(query, transformed_query=transformed_query)
-        
-        # 4단계: 프롬프트 생성 (원본 질문 사용)
         messages = self._build_prompt(query, contexts)
 
         resp = self.client.chat.completions.create(
@@ -504,19 +504,14 @@ class RAGChain:
         }
 
     def retrieve_contexts(self, query: str, top_k: int = 5):
-        # Vector 검색
         vector_results = self.vector_store.similarity_search_with_score(query, k=top_k*2)
         
-        # 메타데이터 필터링 추가 (교재 관련 청크 우선)
         for doc, score in vector_results:
             metadata = doc.metadata
             content = doc.page_content.lower()
             
-            # "교재", "참고도서" 등의 키워드가 있으면 점수 부스팅
             if any(keyword in content for keyword in ["교재", "참고도서", "참고문헌", "textbook"]):
-                score *= 1.2  # 점수 상향 조정
-            
-            # ...existing code...
+                score *= 1.2
 
 def get_relevant_contexts(
     query: str,
@@ -526,12 +521,9 @@ def get_relevant_contexts(
     k: int = 20,
     final_k: int = 5
 ) -> List[Dict]:
-    """하이브리드 검색 + Reranking으로 관련 문서 반환"""
-    
-    # 쿼리 확장: 유사 키워드 추가
     query_expansion = {
-        #"주요교재": ["교재", "주교재", "참고서적", "교과서", "textbook", "참고도서"],
-        #"참고교재": ["부교재", "참고서적", "추천도서", "reference book"],
+        "주요교재": ["교재", "주교재", "참고서적", "교과서", "textbook", "참고도서"],
+        "참고교재": ["부교재", "참고서적", "추천도서", "reference book"],
         "교수": ["담당교수", "교수님", "강의자", "instructor"],
         "학점": ["성적", "평가", "점수", "grade"]
     }
@@ -542,10 +534,8 @@ def get_relevant_contexts(
             expanded_query = query + " " + " ".join(synonyms)
             break
     
-    # Vector Search
     vector_results = vectorstore.similarity_search_with_score(expanded_query, k=k)
     
-    # BM25 Search (확장된 쿼리 사용)
     bm25_scores = bm25_index["index"].get_scores(
         bm25_index["tokenizer"](expanded_query)
     )

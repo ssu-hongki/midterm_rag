@@ -1,4 +1,3 @@
-# preprocess_pdfs.py
 # -*- coding: utf-8 -*-
 
 import re
@@ -211,7 +210,6 @@ def parse_weekly(tables):
             keyword = norm(row[1]) if len(row) > 1 and row[1] else ""
             desc = norm(row[2]) if len(row) > 2 and row[2] else ""
             method = norm(row[3]) if len(row) > 3 and row[3] else ""
-            texts = norm(row[4]) if len(row) > 4 and row[4] else ""
 
             weekly_dict[f"{wn}주차"] = {
                 "핵심어": keyword,
@@ -238,35 +236,38 @@ def process_single_pdf(pdf_path: Path) -> Dict:
 
     credit_hours = parse_credit_hours(info.get("학점/주당시간", ""))
 
-    metadata = {
+    result = {
+        "chunk_id": None,
         "source_pdf": pdf_path.name,
-        "강좌명": info.get("강좌명"),
-        "담당교수": info.get("담당교수"),
-        "년도": info.get("년도"),
-        "학기": info.get("학기"),
-        "분반": info.get("분반"),
-        "수강대상학과": info.get("수강대상학과"),
-        "학점": credit_hours["학점"],
-        "설계학점": credit_hours["설계학점"],
-        "주당시간": credit_hours["주당시간"],
-        "성적스케일": info.get("성적스케일"),
-        "교과목유형": info.get("교과목유형"),
-        "연락처": info.get("연락처"),
-        "강좌형식": info.get("강좌형식"),
-        "공학인증 교과목 관련 항목": abeek_info if abeek_info else None,
-        "필수 선수과목": info.get("필수 선수과목"),
-        "권장 선수과목": info.get("권장 선수과목"),
-        "교과목 개요": info.get("교과목 개요"),
-        "교육목표": goals,
-        "평가항목": eval_dict,
-        "주요교재": notes.get("주교재"),
-        "참고교재(대표)": notes.get("참고교재"),
-        "학습준비사항": notes.get("학습준비사항"),
-        "수강학생 유의 및 참고사항": notes.get("수강학생 유의사항"),
-        "주차별 강의개요": weekly_dict
+        "metadata": {
+            "강좌명": info.get("강좌명"),
+            "담당교수": info.get("담당교수"),
+            "년도": info.get("년도"),
+            "학기": info.get("학기"),
+            "분반": info.get("분반"),
+            "수강대상학과": info.get("수강대상학과"),
+            "학점": credit_hours["학점"],
+            "설계학점": credit_hours["설계학점"],
+            "주당시간": credit_hours["주당시간"],
+            "성적스케일": info.get("성적스케일"),
+            "교과목유형": info.get("교과목유형"),
+            "연락처": info.get("연락처"),
+            "강좌형식": info.get("강좌형식"),
+            "공학인증 교과목 관련 항목": abeek_info if abeek_info else None,
+            "필수 선수과목": info.get("필수 선수과목"),
+            "권장 선수과목": info.get("권장 선수과목"),
+            "교과목 개요": info.get("교과목 개요"),
+            "교육목표": goals,
+            "평가항목": eval_dict,
+            "주요교재": notes.get("주교재"),
+            "참고교재(대표)": notes.get("참고교재"),
+            "학습준비사항": notes.get("학습준비사항"),
+            "수강학생 유의 및 참고사항": notes.get("수강학생 유의사항"),
+            "주차별 강의개요": weekly_dict
+        }
     }
 
-    return metadata
+    return result
 
 def process_all_pdfs(
     input_dir: Path = Path("data/pdfs"),
@@ -279,31 +280,24 @@ def process_all_pdfs(
     pdf_files = sorted(input_dir.glob("*.pdf"))
     
     if not pdf_files:
-        print(f"⚠ 경고: {input_dir}에 PDF 파일이 없습니다.")
         return
     
     chunk_id = 0
     for pdf_path in pdf_files:
         if "설계교육계획서" in pdf_path.name:
-            print(f"⏭ Skipping: {pdf_path.name} (설계교육계획서)")
             continue
             
-        print(f"▶ Processing: {pdf_path.name}")
         try:
             course_data = process_single_pdf(pdf_path)
             course_data["chunk_id"] = chunk_id
             chunk_id += 1
             all_courses.append(course_data)
-            print(f"  ✅ 메타데이터 생성 완료 (chunk_id: {course_data['chunk_id']})")
-        except Exception as e:
-            print(f"  ⚠ {pdf_path.name} 처리 중 오류: {e}")
+        except Exception:
+            pass
 
     if all_courses:
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(all_courses, f, ensure_ascii=False, indent=2)
-        print(f"\n✅ 총 {len(all_courses)}개 강의 저장 → {output_path}")
-    else:
-        print("\n⚠ 처리된 데이터가 없습니다.")
 
 if __name__ == "__main__":
     process_all_pdfs()
