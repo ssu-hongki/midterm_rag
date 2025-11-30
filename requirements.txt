@@ -14,3 +14,4 @@ pandas
 streamlit
 scikit-learn==1.6.0
 gdown
+sentence-transformers==3.3.1
