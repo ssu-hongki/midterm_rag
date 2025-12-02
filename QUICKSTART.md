@@ -116,8 +116,3 @@ python rebuild_vector_store.py
 # 백엔드: backend/main.py의 포트 변경
 # 프론트엔드: frontend/vite.config.ts의 포트 변경
 ```
-
-## 📚 더 자세한 정보
-
-전체 문서는 `README_REACT.md`를 참고하세요.
-

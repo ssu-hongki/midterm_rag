@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Settings, AlertCircle, CheckCircle2, Loader2, BookOpen } from 'lucide-react';
 import { ChatInterface } from './components/ChatInterface';
+import { PreviewPanel } from './components/PreviewPanel';
 import { apiClient } from './api';
 import { Message, QueryConfig, SSEEvent, ProgressStatus } from './types';
 
@@ -14,6 +15,11 @@ function App() {
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [serverStatus, setServerStatus] = useState<'checking' | 'healthy' | 'error'>('checking');
+  
+  // Preview panel state
+  const [previewContent, setPreviewContent] = useState('');
+  const [isPreviewActive, setIsPreviewActive] = useState(false);
+  const [isPreviewComplete, setIsPreviewComplete] = useState(false);
 
   // Check server health on mount
   useEffect(() => {
@@ -58,6 +64,11 @@ function App() {
     setMessages(prev => [...prev, userMessage]);
     setIsProcessing(true);
     
+    // Reset preview panel
+    setPreviewContent('');
+    setIsPreviewActive(false);
+    setIsPreviewComplete(false);
+    
     // 대화 히스토리 준비 (최근 메시지만, 완료된 것만)
     const chatHistory = messages
       .filter(m => m.status === 'complete' && m.content)
@@ -95,12 +106,42 @@ function App() {
 
       // Stream the response (대화 히스토리 포함)
       for await (const event of apiClient.queryStream(content, config, chatHistory)) {
+        switch (event.type) {
+          case 'preview_start':
+            setIsPreviewActive(true);
+            setPreviewContent('');
+            break;
+
+          case 'preview_chunk':
+            if (event.content) {
+              setPreviewContent(prev => prev + event.content);
+            }
+            break;
+
+          case 'preview_complete':
+            // 미리보기 완료
+            break;
+
+          case 'rag_start':
+            // RAG 검색 시작
+            currentProgress = {
+              step: 'analyzing',
+              message: '정확한 답변을 찾고 있습니다...',
+            };
+            setMessages(prev => prev.map(msg => {
+              if (msg.id !== assistantMessageId) return msg;
+              return { ...msg, progress: currentProgress };
+            }));
+            break;
+        }
+
         setMessages(prev => prev.map(msg => {
           if (msg.id !== assistantMessageId) return msg;
 
           const updates: Partial<Message> = {};
 
           switch (event.type) {
+
             case 'status':
               currentProgress = {
                 step: event.step as any,
@@ -159,8 +200,9 @@ function App() {
               updates.status = 'complete';
               updates.progress = {
                 step: 'complete',
-                message: '✅ 완료',
+                message: '완료',
               };
+              setIsPreviewComplete(true);
               break;
 
             case 'error':
@@ -318,7 +360,7 @@ function App() {
       </header>
 
       {/* Chat Interface */}
-      <main className="flex-1 overflow-hidden">
+      <main className="flex-1 overflow-hidden relative">
         {serverStatus === 'error' ? (
           <div className="h-full flex items-center justify-center">
             <div className="text-center">
@@ -338,11 +380,20 @@ function App() {
             </div>
           </div>
         ) : (
-          <ChatInterface
-            messages={messages}
-            onSendMessage={handleSendMessage}
-            isProcessing={isProcessing}
-          />
+          <>
+            <ChatInterface
+              messages={messages}
+              onSendMessage={handleSendMessage}
+              isProcessing={isProcessing}
+            />
+            
+            {/* Preview Panel */}
+            <PreviewPanel
+              content={previewContent}
+              isActive={isPreviewActive}
+              isComplete={isPreviewComplete}
+            />
+          </>
         )}
       </main>
     </div>

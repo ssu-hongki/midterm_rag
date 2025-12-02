@@ -40,7 +40,8 @@ export interface ChatHistoryMessage {
 export interface SSEEvent {
   type: 'status' | 'transformed_query' | 'filters' | 'expanded_queries' | 
         'contexts_found' | 'answer_start' | 'answer_chunk' | 'answer_complete' | 
-        'contexts' | 'complete' | 'error';
+        'contexts' | 'complete' | 'error' |
+        'preview_start' | 'preview_chunk' | 'preview_complete' | 'rag_start';
   step?: string;
   message?: string;
   original?: string;

@@ -125,6 +125,37 @@ async def generate_rag_response(query: str, chat_history: list = None):
         return
     
     try:
+        # 즉각적인 배경 지식 제공 (미니 답변)
+        yield f"data: {json.dumps({'type': 'preview_start'}, ensure_ascii=False)}\n\n"
+        
+        # 질문에서 주요 키워드 추출하여 간단한 배경 지식 생성
+        preview_prompt = f"""사용자가 '{query}'에 대해 질문했어.
+이 질문의 주제에 대한 간단하고 흥미로운 배경 지식을 2-3문장으로 알려줘.
+구체적인 강의 내용은 언급하지 말고, 일반적인 개념이나 흥미로운 사실만 제공해줘.
+친근한 반말로 말해줘."""
+
+        preview_stream = rag_chain.client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "너는 친근하고 재밌는 친구같은 AI야. 반말로 편하게 대화하고, 사용자의 질문 주제에 대한 흥미로운 배경 지식을 알려줘. 이모티콘은 사용하지 마."},
+                {"role": "user", "content": preview_prompt}
+            ],
+            max_tokens=150,
+            temperature=0.8,
+            stream=True
+        )
+        
+        for chunk in preview_stream:
+            if chunk.choices[0].delta.content:
+                content = chunk.choices[0].delta.content
+                yield f"data: {json.dumps({'type': 'preview_chunk', 'content': content}, ensure_ascii=False)}\n\n"
+        
+        yield f"data: {json.dumps({'type': 'preview_complete'}, ensure_ascii=False)}\n\n"
+        await asyncio.sleep(0.5)
+        
+        # 이제 실제 RAG 검색 시작
+        yield f"data: {json.dumps({'type': 'rag_start'}, ensure_ascii=False)}\n\n"
+        
         # 1단계: 질문 분석 시작
         yield f"data: {json.dumps({'type': 'status', 'step': 'analyzing', 'message': '질문 분석 중...'}, ensure_ascii=False)}\n\n"
         await asyncio.sleep(0.3)
