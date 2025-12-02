@@ -410,8 +410,12 @@ class RAGChain:
     def _build_prompt(
         self,
         query: str,
-        contexts: List[Dict[str, Any]]
+        contexts: List[Dict[str, Any]],
+        chat_history: List[Dict[str, str]] = None
     ) -> List[Dict[str, str]]:
+        
+        if chat_history is None:
+            chat_history = []
         
         context_str_list = []
         for i, c in enumerate(contexts, start=1):
@@ -468,26 +472,36 @@ class RAGChain:
             "너는 숭실대학교 강의계획서 RAG 챗봇이야.\n"
             "아래 제공된 강의계획서 청크 내용만을 근거로 답변하고, "
             "모르는 내용은 아는 척 하지 말고 모른다고 말해.\n"
-            "답변할 때는 강좌명, 담당교수, 교육목표, 교재 등 구체적인 정보를 포함해서 자세히 설명해줘."
+            "답변할 때는 강좌명, 담당교수, 교육목표, 교재 등 구체적인 정보를 포함해서 자세히 설명해줘.\n"
+            "이전 대화 내용을 참고하여 맥락을 이해하고 답변해줘."
         )
 
+        # 메시지 구성: 시스템 메시지 + 이전 대화 히스토리 + 현재 질문
+        messages = [{"role": "system", "content": system_msg}]
+        
+        # 이전 대화 히스토리 추가 (최근 5개만)
+        recent_history = chat_history[-10:] if len(chat_history) > 10 else chat_history
+        messages.extend(recent_history)
+        
+        # 현재 질문과 컨텍스트 추가
         user_msg = (
             f"다음은 강의계획서에서 추출한 관련 내용이야:\n\n"
             f"{context_block}\n\n"
             f"위 내용을 참고해서 아래 질문에 한국어로 자세히 답변해줘.\n"
             f"질문: {query}"
         )
+        messages.append({"role": "user", "content": user_msg})
 
-        return [
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": user_msg},
-        ]
+        return messages
 
-    def ask(self, query: str) -> Dict[str, Any]:
+    def ask(self, query: str, chat_history: List[Dict[str, str]] = None) -> Dict[str, Any]:
+        if chat_history is None:
+            chat_history = []
+            
         transformed_query = self._transform_query(query) if self.use_query_expansion else query
         filters = self._extract_metadata_filters(query)
         contexts = self._retrieve(query, transformed_query=transformed_query)
-        messages = self._build_prompt(query, contexts)
+        messages = self._build_prompt(query, contexts, chat_history=chat_history)
 
         resp = self.client.chat.completions.create(
             model=ANSWER_MODEL,

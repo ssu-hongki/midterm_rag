@@ -10,3 +10,4 @@ def rebuild_vector_store():
 if __name__ == "__main__":
     rebuild_vector_store()
 
+
