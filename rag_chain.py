@@ -34,7 +34,7 @@ class RAGChain:
         if self.use_hybrid_search:
             documents = [meta.get("text", "") for meta in self.metadatas]
             initialize_bm25(documents)
-            self.use_hybrid_search = False
+            self.use_hybrid_search = True
 
     def _transform_query(self, query: str) -> str:
         prompt = f"""다음 질문을 강의계획서 검색에 적합한 명확한 질문으로 변환해주세요.
@@ -318,6 +318,18 @@ class RAGChain:
         if len(candidates) <= self.k:
             return candidates
         
+        # 재순위 전 상위 5개 출력
+        print(f"\n=== 재순위 적용 전 상위 5개 (Hybrid Score 기준) ===")
+        for i, cand in enumerate(candidates[:5], 1):
+            meta = cand.get('metadata', {})
+            if 'metadata' in meta:
+                inner_meta = meta['metadata']
+            else:
+                inner_meta = meta
+            course_name = inner_meta.get('강좌명', 'unknown')
+            hybrid_score = cand.get("hybrid_score", cand.get("score", 0))
+            print(f"  {i}. {course_name[:30]:30s} | Hybrid Score: {hybrid_score:.4f}")
+        
         texts = []
         for candidate in candidates:
             metadata = candidate.get("metadata", {})
@@ -394,7 +406,11 @@ class RAGChain:
                 else:
                     inner_meta = meta
                 course_name = inner_meta.get('강좌명', 'unknown')
-                print(f"  {i}. {course_name[:20]:20s} | Hybrid: {cand.get('hybrid_score', 0):.3f}, Rerank: {cand['rerank_score']:.3f}, 최종: {cand['score']:.3f}")
+                hybrid = cand.get('hybrid_score', 0)
+                rerank = cand['rerank_score']
+                final = cand['score']
+                print(f"  {i}. {course_name[:30]:30s}")
+                print(f"     Hybrid: {hybrid:.4f} | Rerank: {rerank:.4f} | 최종: {final:.4f} (10%H + 90%R)")
             
             return candidates
             
