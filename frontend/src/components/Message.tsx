@@ -65,15 +65,12 @@ export function Message({ message }: MessageProps) {
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
-                  className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm"
+                  className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm"
                 >
-                  <p className="text-blue-900 font-medium mb-1">🔍 질문 변환</p>
-                  <p className="text-blue-700">
-                    <span className="text-blue-500">원본:</span> {message.content}
-                  </p>
-                  <p className="text-blue-700">
-                    <span className="text-blue-500">변환:</span> {message.transformedQuery}
-                  </p>
+                  <p className="text-slate-700 font-medium mb-2">질문이 더 명확하게 변환되었습니다</p>
+                  <div className="bg-white rounded p-2 border border-slate-100">
+                    <p className="text-slate-600">{message.transformedQuery}</p>
+                  </div>
                 </motion.div>
               )}
 
@@ -82,14 +79,14 @@ export function Message({ message }: MessageProps) {
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
-                  className="bg-purple-50 border border-purple-200 rounded-lg p-3 text-sm"
+                  className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm"
                 >
-                  <p className="text-purple-900 font-medium mb-2">🏷️ 적용된 필터</p>
+                  <p className="text-slate-700 font-medium mb-2">적용된 필터</p>
                   <div className="flex flex-wrap gap-2">
                     {Object.entries(message.filters).map(([key, value]) => (
                       <span 
                         key={key}
-                        className="px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs"
+                        className="px-2 py-1 bg-slate-100 text-slate-700 rounded text-xs"
                       >
                         {key}: {value}
                       </span>
@@ -132,8 +129,8 @@ export function Message({ message }: MessageProps) {
                   animate={{ opacity: 1, height: 'auto' }}
                   className="space-y-2"
                 >
-                  <p className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                    📚 참고한 강의계획서 ({message.contexts.length}개)
+                  <p className="text-sm font-medium text-gray-700">
+                    참고한 강의계획서 ({message.contexts.length}개)
                   </p>
                   <div className="space-y-2">
                     {message.contexts.map((context, index) => (

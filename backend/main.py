@@ -126,8 +126,8 @@ async def generate_rag_response(query: str, chat_history: list = None):
     
     try:
         # 1단계: 질문 분석 시작
-        yield f"data: {json.dumps({'type': 'status', 'step': 'analyzing', 'message': '🔍 질문 분석 중...'}, ensure_ascii=False)}\n\n"
-        await asyncio.sleep(0.1)  # UI 업데이트를 위한 짧은 대기
+        yield f"data: {json.dumps({'type': 'status', 'step': 'analyzing', 'message': '질문 분석 중...'}, ensure_ascii=False)}\n\n"
+        await asyncio.sleep(0.3)
         
         # 질문 변환
         transformed_query = query
@@ -135,35 +135,40 @@ async def generate_rag_response(query: str, chat_history: list = None):
             transformed_query = rag_chain._transform_query(query)
             if transformed_query != query:
                 yield f"data: {json.dumps({'type': 'transformed_query', 'original': query, 'transformed': transformed_query}, ensure_ascii=False)}\n\n"
-        
-        yield f"data: {json.dumps({'type': 'status', 'step': 'analyzing_complete', 'message': '✅ 질문 분석 완료'}, ensure_ascii=False)}\n\n"
+                await asyncio.sleep(0.2)
         
         # 2단계: 메타데이터 필터 추출
-        yield f"data: {json.dumps({'type': 'status', 'step': 'filtering', 'message': '🏷️ 관련 강의 필터링 중...'}, ensure_ascii=False)}\n\n"
-        filters = rag_chain._extract_metadata_filters(query)
+        yield f"data: {json.dumps({'type': 'status', 'step': 'filtering', 'message': '관련 강의 필터링 중...'}, ensure_ascii=False)}\n\n"
+        await asyncio.sleep(0.3)
         
+        filters = rag_chain._extract_metadata_filters(query)
         if filters:
             yield f"data: {json.dumps({'type': 'filters', 'filters': filters}, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(0.2)
         
         # 3단계: 문서 검색
-        yield f"data: {json.dumps({'type': 'status', 'step': 'searching', 'message': '📚 관련 문서 검색 중...'}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'status', 'step': 'searching', 'message': '관련 문서 검색 중...'}, ensure_ascii=False)}\n\n"
+        await asyncio.sleep(0.3)
         
         # Query expansion
         if rag_chain.use_query_expansion:
             expanded_queries = rag_chain._expand_query(transformed_query or query)
             yield f"data: {json.dumps({'type': 'expanded_queries', 'queries': expanded_queries}, ensure_ascii=False)}\n\n"
-        
-        # 4단계: 재랭킹
-        if rag_chain.use_reranking:
-            yield f"data: {json.dumps({'type': 'status', 'step': 'reranking', 'message': '🎯 결과 재정렬 중...'}, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(0.2)
         
         # 실제 검색 수행
         contexts = rag_chain._retrieve(query, transformed_query=transformed_query)
-        
         yield f"data: {json.dumps({'type': 'contexts_found', 'count': len(contexts)}, ensure_ascii=False)}\n\n"
+        await asyncio.sleep(0.3)
+        
+        # 4단계: 재랭킹
+        if rag_chain.use_reranking:
+            yield f"data: {json.dumps({'type': 'status', 'step': 'reranking', 'message': '결과 재정렬 중...'}, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(0.3)
         
         # 5단계: 답변 생성
-        yield f"data: {json.dumps({'type': 'status', 'step': 'generating', 'message': '✨ 답변 생성 중...'}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'status', 'step': 'generating', 'message': '답변 생성 중...'}, ensure_ascii=False)}\n\n"
+        await asyncio.sleep(0.2)
         
         # 프롬프트 생성 (대화 히스토리 포함)
         messages = rag_chain._build_prompt(query, contexts, chat_history=chat_history)

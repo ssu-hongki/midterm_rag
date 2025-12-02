@@ -1,64 +1,16 @@
-/Users/usbinn/Documents/GitHub/midterm_rag/backend/main.py:52: DeprecationWarning: 
+/Users/usbinn/Documents/GitHub/midterm_rag/backend/main.py:57: DeprecationWarning: 
         on_event is deprecated, use lifespan event handlers instead.
 
         Read more about it in the
         [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
         
   @app.on_event("startup")
-INFO:     Started server process [4290]
+INFO:     Started server process [23257]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 ✅ RAG Chain 초기화 완료
-INFO:     127.0.0.1:50268 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50268 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50268 - "OPTIONS /api/query/stream HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50268 - "POST /api/query/stream HTTP/1.1" 200 OK
-
-쿼리 확장: 3개
-  1. 자연언어처리 강의의 평가 방법은 무엇인가요?
-  2. 자연언어처리 강의에서는 어떤 평가 기준을 사용하나요?
-  3. 자연언어처리 수업의 성적 평가는 어떻게 이루어지나요?
-필터링 결과: 1/183개 문서
-  쿼리 1 벡터 검색: 1개 발견
-    → 병합 후: 1개 (새로 추가: 1개)
-  쿼리 2 벡터 검색: 1개 발견
-    → 병합 후: 1개 (새로 추가: 0개)
-  쿼리 3 벡터 검색: 1개 발견
-    → 병합 후: 1개 (새로 추가: 0개)
-  1. 강좌명: 자연언어처리
-INFO:     127.0.0.1:50301 - "GET / HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50301 - "GET / HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50301 - "GET / HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50270 - "OPTIONS /api/config HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50270 - "POST /api/config HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50270 - "POST /api/config HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50375 - "POST /api/config HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50375 - "POST /api/config HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50393 - "POST /api/query/stream HTTP/1.1" 200 OK
-필터링 결과: 0/183개 문서
-필터 조건에 맞는 문서가 없습니다!
-INFO:     127.0.0.1:50611 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50613 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50613 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50613 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50613 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50613 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50670 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50759 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50759 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50761 - "POST /api/query/stream HTTP/1.1" 200 OK
-
-쿼리 확장: 3개
-  1. 자연언어처리 강의의 3주차 강의 계획은 무엇인가요?
-  2. 자연언어처리 과정의 세 번째 주 강의 내용은 어떻게 구성되어 있나요?
-  3. 자연언어처리 강의에서 3주차에 다룰 주제는 어떤 것들이 있습니까?
-필터링 결과: 1/183개 문서
-  쿼리 1 벡터 검색: 1개 발견
-    → 병합 후: 1개 (새로 추가: 1개)
-  쿼리 2 벡터 검색: 1개 발견
-    → 병합 후: 1개 (새로 추가: 0개)
-  쿼리 3 벡터 검색: 1개 발견
-    → 병합 후: 1개 (새로 추가: 0개)
-  1. 강좌명: 자연언어처리
-INFO:     127.0.0.1:50891 - "POST /api/query/stream HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56828 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56828 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56828 - "OPTIONS /api/query/stream HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56828 - "POST /api/query/stream HTTP/1.1" 200 OK

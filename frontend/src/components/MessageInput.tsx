@@ -77,9 +77,9 @@ export function MessageInput({ onSend, disabled, placeholder }: MessageInputProp
       </div>
       
       {/* Hint */}
-      <div className="mt-2 px-2 flex items-center justify-between text-xs text-gray-400">
-        <span>💡 팁: 자연어로 자유롭게 질문하세요</span>
-        <span>Enter로 전송 · Shift+Enter로 줄바꿈</span>
+      <div className="mt-2 px-2 flex items-center justify-between text-xs text-gray-500">
+        <span>자연어로 자유롭게 질문하세요</span>
+        <span className="hidden sm:inline">Enter 전송 · Shift+Enter 줄바꿈</span>
       </div>
     </form>
   );

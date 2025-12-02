@@ -17,11 +17,11 @@ const stepIcons = {
 };
 
 const stepLabels = {
-  analyzing: '질문 분석',
-  filtering: '강의 필터링',
-  searching: '문서 검색',
-  reranking: '결과 재정렬',
-  generating: '답변 생성',
+  analyzing: '1. 질문 분석',
+  filtering: '2. 강의 필터링',
+  searching: '3. 문서 검색',
+  reranking: '4. 결과 재정렬',
+  generating: '5. 답변 생성',
   complete: '완료',
 };
 
